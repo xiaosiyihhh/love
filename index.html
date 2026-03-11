@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>李峋同款爱心 - XIAO ❤️ DING</title>
+    <!-- 加载 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 加载 React 相关库 -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- 加载 Babel 用于解析 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 加载 Lucide 图标库 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { margin: 0; background-color: #050505; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useEffect, useRef, useState } = React;
+
+        const App = () => {
+            const canvasRef = useRef(null);
+            const mouseRef = useRef({ x: -1000, y: -1000, active: false });
+            const [bpm, setBpm] = useState(72);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationFrameId;
+
+                const settings = {
+                    particles: { length: 3500, duration: 2.2, velocity: 90, effect: -0.65, size: 2 },
+                    interaction: { radius: 120, strength: 3.0 }
+                };
+
+                const resize = () => {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                };
+                window.addEventListener('resize', resize);
+                resize();
+
+                const pointOnHeart = (t) => ({
+                    x: 180 * Math.pow(Math.sin(t), 3),
+                    y: 150 * Math.cos(t) - 60 * Math.cos(2 * t) - 30 * Math.cos(3 * t) - 15 * Math.cos(4 * t)
+                });
+
+                class Particle {
+                    constructor() {
+                        this.position = { x: 0, y: 0 };
+                        this.velocity = { x: 0, y: 0 };
+                        this.acceleration = { x: 0, y: 0 };
+                        this.age = 0;
+                        this.randomScale = Math.random() * 0.5 + 0.5;
+                    }
+                    initialize(x, y, dx, dy) {
+                        this.position.x = x; this.position.y = y;
+                        this.velocity.x = dx; this.velocity.y = dy;
+                        this.acceleration.x = dx * settings.particles.effect;
+                        this.acceleration.y = dy * settings.particles.effect;
+                        this.age = 0;
+                    }
+                    update(deltaTime, mouse) {
+                        this.position.x += this.velocity.x * deltaTime;
+                        this.position.y += this.velocity.y * deltaTime;
+                        this.velocity.x += this.acceleration.x * deltaTime;
+                        this.velocity.y += this.acceleration.y * deltaTime;
+                        this.age += deltaTime;
+                        if (mouse.active) {
+                            const dx = this.position.x - mouse.x;
+                            const dy = this.position.y - mouse.y;
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            if (distance < settings.interaction.radius) {
+                                const force = (settings.interaction.radius - distance) / settings.interaction.radius;
+                                this.position.x += (dx / distance) * force * settings.interaction.strength;
+                                this.position.y += (dy / distance) * force * settings.interaction.strength;
+                            }
+                        }
+                    }
+                    draw(ctx, image) {
+                        const ease = (t) => (--t) * t * t + 1;
+                        const progress = this.age / settings.particles.duration;
+                        const size = image.width * ease(progress) * this.randomScale;
+                        ctx.globalAlpha = (1 - progress) * 0.9;
+                        ctx.drawImage(image, this.position.x - size / 2, this.position.y - size / 2, size, size);
+                    }
+                }
+
+                class ParticlePool {
+                    constructor(length) {
+                        this.particles = Array.from({length}, () => new Particle());
+                        this.firstActive = 0; this.firstFree = 0;
+                        this.duration = settings.particles.duration;
+                    }
+                    add(x, y, dx, dy) {
+                        this.particles[this.firstFree].initialize(x, y, dx, dy);
+                        this.firstFree = (this.firstFree + 1) % this.particles.length;
+                        if (this.firstActive === this.firstFree) this.firstActive = (this.firstActive + 1) % this.particles.length;
+                    }
+                    update(deltaTime, mouse) {
+                        let i = this.firstActive;
+                        while (i !== this.firstFree) {
+                            this.particles[i].update(deltaTime, mouse);
+                            i = (i + 1) % this.particles.length;
+                        }
+                        while (this.particles[this.firstActive].age >= this.duration && this.firstActive !== this.firstFree) {
+                            this.firstActive = (this.firstActive + 1) % this.particles.length;
+                        }
+                    }
+                    draw(ctx, image) {
+                        let i = this.firstActive;
+                        while (i !== this.firstFree) {
+                            this.particles[i].draw(ctx, image);
+                            i = (i + 1) % this.particles.length;
+                        }
+                    }
+                }
+
+                const particles = new ParticlePool(settings.particles.length);
+                const particleRate = settings.particles.length / settings.particles.duration;
+                let time;
+
+                const texture = (() => {
+                    const tCanvas = document.createElement('canvas');
+                    tCanvas.width = tCanvas.height = settings.particles.size * 2;
+                    const tCtx = tCanvas.getContext('2d');
+                    const grd = tCtx.createRadialGradient(settings.particles.size, settings.particles.size, 0, settings.particles.size, settings.particles.size, settings.particles.size);
+                    grd.addColorStop(0, 'rgba(255, 45, 85, 1)');
+                    grd.addColorStop(1, 'rgba(255, 45, 85, 0)');
+                    tCtx.fillStyle = grd;
+                    tCtx.fillRect(0, 0, tCanvas.width, tCanvas.height);
+                    return tCanvas;
+                })();
+
+                const render = () => {
+                    animationFrameId = requestAnimationFrame(render);
+                    const newTime = Date.now() / 1000;
+                    const deltaTime = newTime - (time || newTime);
+                    time = newTime;
+                    ctx.fillStyle = 'rgba(5, 5, 5, 0.2)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    const centerX = canvas.width / 2;
+                    const centerY = canvas.height / 2 - 20;
+                    const pulse = 1 + Math.sin(time * 5) * 0.12;
+                    const amount = particleRate * deltaTime;
+                    for (let i = 0; i < amount; i++) {
+                        const t = Math.PI - 2 * Math.PI * Math.random();
+                        const pos = pointOnHeart(t);
+                        const dir = { x: pos.x * pulse, y: -pos.y * pulse };
+                        const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y);
+                        particles.add(centerX + dir.x, centerY + dir.y, dir.x / len * settings.particles.velocity, dir.y / len * settings.particles.velocity);
+                    }
+                    particles.update(deltaTime, mouseRef.current);
+                    particles.draw(ctx, texture);
+                };
+
+                render();
+                return () => {
+                    cancelAnimationFrame(animationFrameId);
+                    window.removeEventListener('resize', resize);
+                };
+            }, []);
+
+            return (
+                <div className="w-full h-screen bg-[#050505] overflow-hidden relative font-sans text-white select-none cursor-crosshair"
+                     onMouseMove={(e) => mouseRef.current = { x: e.clientX, y: e.clientY, active: true }}
+                     onMouseLeave={() => mouseRef.current.active = false}>
+                    <div className="absolute inset-0 pointer-events-none opacity-10" style={{ backgroundImage: 'radial-gradient(#ff2d55 0.5px, transparent 0.5px)', backgroundSize: '40px 40px' }} />
+                    <canvas ref={canvasRef} className="absolute inset-0" />
+                    
+                    <nav className="absolute top-0 left-0 w-full p-8 flex justify-between items-center pointer-events-none">
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 border border-red-500/50 flex items-center justify-center rotate-45">
+                                <i data-lucide="heart" className="w-4 h-4 text-red-500 -rotate-45 fill-red-500"></i>
+                            </div>
+                            <span className="font-bold tracking-[0.4em] text-sm opacity-80 uppercase">Lighter_Heart.exe</span>
+                        </div>
+                    </nav>
+
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-[160px] flex flex-col items-center pointer-events-none">
+                        <div className="flex items-center gap-4 text-3xl md:text-5xl font-black tracking-widest text-white/90">
+                            <span>XIAO</span>
+                            <i data-lucide="heart" className="w-8 h-8 md:w-12 md:h-12 text-red-500 fill-red-500"></i>
+                            <span>DING</span>
+                        </div>
+                        <div className="h-[1px] w-48 bg-gradient-to-r from-transparent via-red-500/50 to-transparent mt-4" />
+                    </div>
+
+                    <div className="absolute bottom-12 left-12 opacity-30 text-[10px] tracking-widest">
+                        STATUS: CORE_ACTIVE <br/> BPM: {Math.round(bpm)}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+        
+        // 初始化图标
+        setTimeout(() => lucide.createIcons(), 100);
+    </script>
+</body>
+</html>
