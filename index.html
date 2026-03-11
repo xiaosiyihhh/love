@@ -74,18 +74,6 @@
                 const ctx = canvas.getContext('2d');
                 let animationFrameId;
 
-                const settings = {
-                    particles: { 
-                        // 确保有足够的粒子来构建完整的 3D 表面
-                        length: window.innerWidth < 768 ? 6000 : 10000,
-                        duration: 2.2, 
-                        velocity: 18,   
-                        effect: -0.2,   
-                        size: window.innerWidth < 768 ? 1.4 : 1.8
-                    },
-                    interaction: { radius: 110, strength: 120 } 
-                };
-
                 const resize = () => {
                     canvas.width = window.innerWidth;
                     canvas.height = window.innerHeight;
@@ -93,199 +81,163 @@
                 window.addEventListener('resize', resize);
                 resize();
 
-                // 核心：构建完整的 3D 饱满曲面
-                const pointOnHeart3D = (t, p) => {
-                    const scale = window.innerWidth < 768 ? 0.75 : 1.1;
-                    
-                    const baseX = 16 * Math.pow(Math.sin(t), 3);
-                    const baseY = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 3 * Math.cos(3 * t) - Math.cos(4 * t);
-                    
-                    // 利用 cos 和 sin 生成饱满的 3D 旋转曲面，0.5 是扁平系数（像真实的项链吊坠）
-                    const x = baseX * Math.cos(p);
-                    const z = baseX * Math.sin(p) * 0.5; 
-
-                    const jitter = 0.5;
-                    const jx = (Math.random() - 0.5) * jitter;
-                    const jy = (Math.random() - 0.5) * jitter;
-                    const jz = (Math.random() - 0.5) * jitter;
-
-                    return {
-                        x: (x * 11.25 + jx) * scale,
-                        y: (baseY * 11.5 + jy) * scale,
-                        z: (z * 11.25 + jz) * scale
-                    };
-                };
-
-                class Particle {
-                    constructor() {
-                        this.position = { x: 0, y: 0, z: 0 };
-                        this.velocity = { x: 0, y: 0, z: 0 };
-                        this.acceleration = { x: 0, y: 0, z: 0 };
-                        this.age = 0;
-                        this.randomScale = Math.random() * 0.5 + 0.5;
-                    }
-                    initialize(x, y, z, dx, dy, dz) {
-                        this.position.x = x; this.position.y = y; this.position.z = z;
-                        this.velocity.x = dx; this.velocity.y = dy; this.velocity.z = dz;
-                        this.acceleration.x = dx * settings.particles.effect;
-                        this.acceleration.y = dy * settings.particles.effect;
-                        this.acceleration.z = dz * settings.particles.effect;
-                        this.age = 0;
-                        this.duration = settings.particles.duration;
-                    }
-                    update(deltaTime, mouse, angleX, angleY, centerX, centerY, pulse) {
-                        this.position.x += this.velocity.x * deltaTime;
-                        this.position.y += this.velocity.y * deltaTime;
-                        this.position.z += this.velocity.z * deltaTime;
+                // 核心重构：静态 3D 点云架构，拒绝拖尾和晕眩
+                class StaticParticle {
+                    constructor(tx, ty, tz, nx, ny, nz, scale) {
+                        // 将 Taubin 数学坐标映射到 Canvas 屏幕坐标
+                        // X 是左右，Z (Taubin的Z是上下)，Y是纵深前后
+                        this.baseX = tx * scale;
+                        this.baseY = -tz * scale; // 翻转 Y 轴，确保爱心尖端朝下
+                        this.baseZ = ty * scale;
                         
-                        this.velocity.x += this.acceleration.x * deltaTime;
-                        this.velocity.y += this.acceleration.y * deltaTime;
-                        this.velocity.z += this.acceleration.z * deltaTime;
-                        
-                        this.age += deltaTime;
+                        // 法线映射 (同样翻转 Y)
+                        this.nx = nx;
+                        this.ny = -nz;
+                        this.nz = ny;
 
+                        // 归一化映射后的法线
+                        let len = Math.sqrt(this.nx*this.nx + this.ny*this.ny + this.nz*this.nz) || 1;
+                        this.nx /= len; this.ny /= len; this.nz /= len;
+
+                        this.randomScale = Math.random() * 0.4 + 0.6;
+                        this.phase = Math.random() * Math.PI * 2; // 用于轻微的独立呼吸
+                        
+                        // 运行时渲染属性
+                        this.renderX = 0;
+                        this.renderY = 0;
+                        this.renderZ = 0;
+                        this.renderNX = 0;
+                        this.renderNY = 0;
+                        this.renderNZ = 0;
+                    }
+
+                    update3D(angleX, angleY, pulse) {
+                        // 1. 基础心跳缩放
+                        let px = this.baseX * pulse;
+                        let py = this.baseY * pulse;
+                        let pz = this.baseZ * pulse;
+
+                        // 2. 3D 旋转矩阵计算位置
+                        let cx = Math.cos(angleX), sx = Math.sin(angleX);
+                        let cy = Math.cos(angleY), sy = Math.sin(angleY);
+
+                        let y1 = py * cx - pz * sx;
+                        let z1 = py * sx + pz * cx;
+                        let x2 = px * cy + z1 * sy;
+                        let z2 = -px * sy + z1 * cy;
+
+                        this.renderX = x2;
+                        this.renderY = y1;
+                        this.renderZ = z2;
+
+                        // 3. 3D 旋转矩阵同步计算法线 (用于光影)
+                        let ny1 = this.ny * cx - this.nz * sx;
+                        let nz1 = this.ny * sx + this.nz * cx;
+                        let nx2 = this.nx * cy + nz1 * sy;
+                        let nz2 = -this.nx * sy + nz1 * cy;
+
+                        this.renderNX = nx2;
+                        this.renderNY = ny1;
+                        this.renderNZ = nz2;
+                    }
+
+                    draw(ctx, textures, centerX, centerY, mouse) {
+                        // 3D 透视投影
+                        const fov = 400;
+                        const perspective = fov / (fov + this.renderZ);
+                        let canvasX = centerX + this.renderX * perspective;
+                        let canvasY = centerY + this.renderY * perspective;
+
+                        // 鼠标触碰时的弹性排斥，不再永久改变形状
                         if (mouse.active) {
-                            let px = this.position.x * pulse;
-                            let py = this.position.y * pulse;
-                            let pz = this.position.z * pulse;
-
-                            let y1 = py * Math.cos(angleX) - pz * Math.sin(angleX);
-                            let z1 = py * Math.sin(angleX) + pz * Math.cos(angleX);
-                            let x2 = px * Math.cos(angleY) - z1 * Math.sin(angleY);
-                            let z2 = px * Math.sin(angleY) + z1 * Math.cos(angleY);
-
-                            const fov = 350;
-                            let perspective = fov / (fov + z2);
-                            let canvasX = centerX + x2 * perspective;
-                            let canvasY = centerY - y1 * perspective;
-
                             let dx = canvasX - mouse.x;
                             let dy = canvasY - mouse.y;
-                            let distance = Math.sqrt(dx * dx + dy * dy);
-                            
-                            if (distance < settings.interaction.radius) {
-                                const safeDistance = Math.max(1, distance);
-                                const force = (settings.interaction.radius - distance) / settings.interaction.radius;
-                                this.position.x += (dx / safeDistance) * force * settings.interaction.strength * deltaTime;
-                                this.position.y -= (dy / safeDistance) * force * settings.interaction.strength * deltaTime;
+                            let dist = Math.sqrt(dx*dx + dy*dy);
+                            if (dist < 100) {
+                                let force = (100 - dist) / 100;
+                                canvasX += (dx / dist) * force * 15;
+                                canvasY += (dy / dist) * force * 15;
                             }
                         }
-                    }
-                    // 引入三张贴图：基础、高光、描边
-                    draw(ctx, textures, angleX, angleY, centerX, centerY, pulse) {
-                        const ease = (t) => (--t) * t * t + 1;
-                        const progress = this.age / this.duration;
 
-                        let px = this.position.x * pulse;
-                        let py = this.position.y * pulse;
-                        let pz = this.position.z * pulse;
-
-                        // 3D 坐标旋转
-                        let y1 = py * Math.cos(angleX) - pz * Math.sin(angleX);
-                        let z1 = py * Math.sin(angleX) + pz * Math.cos(angleX);
-                        let x2 = px * Math.cos(angleY) - z1 * Math.sin(angleY);
-                        let z2 = px * Math.sin(angleY) + z1 * Math.cos(angleY);
-
-                        const fov = 350;
-                        const perspective = fov / (fov + z2);
-                        const canvasX = centerX + x2 * perspective;
-                        const canvasY = centerY - y1 * perspective;
-
-                        // --- 核心：实时法线与光照计算 ---
-                        // 1. 获取粒子相对于中心的法线向量
-                        let nx = this.position.x;
-                        let ny = this.position.y;
-                        let nz = this.position.z / 0.5; // 还原扁平化因子以获得正确法线
-                        let len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
-                        nx /= len; ny /= len; nz /= len;
-
-                        // 2. 将法线同步旋转到相机视角空间
-                        let ny1_n = ny * Math.cos(angleX) - nz * Math.sin(angleX);
-                        let nz1_n = ny * Math.sin(angleX) + nz * Math.cos(angleX);
-                        let nx2_n = nx * Math.cos(angleY) - nz1_n * Math.sin(angleY);
-                        let nz2_n = nx * Math.sin(angleY) + nz1_n * Math.cos(angleY);
-
-                        // 3. 定义虚拟光源位置 (左上方靠前)
-                        let lx = -0.6, ly = -0.6, lz = -0.52; 
-                        // 计算光照强度 (Dot Product)
-                        let dotLight = nx2_n * lx + ny1_n * ly + nz2_n * lz;
-
-                        let size = textures.base.width * ease(progress) * this.randomScale * perspective;
-                        let activeTexture = textures.base;
-                        let baseAlpha = (1 - progress);
+                        // --- 核心光影 Shader ---
+                        // 设置一个从左上前方打来的虚拟光源
+                        const lx = -0.5, ly = -0.5, lz = -0.7; 
+                        const dotLight = this.renderNX * lx + this.renderNY * ly + this.renderNZ * lz;
                         
-                        // --- 核心：高级 Shader 视觉逻辑 ---
-                        // 判断是否为边缘（法线垂直于相机视线，即 Z 分量接近 0）
-                        let isEdge = Math.abs(nz2_n) < 0.25;
+                        // 判定边缘：Z 法线趋近于 0 时，说明这面朝向左右/上下，即轮廓边缘
+                        const isEdge = Math.abs(this.renderNZ) < 0.25;
+
+                        let activeTexture = textures.base;
+                        let alpha = 0.8;
+                        let size = textures.base.width * perspective * this.randomScale;
 
                         if (isEdge) {
-                            // 【边缘描边效果】
+                            // 边缘描边
                             activeTexture = textures.edge;
-                            ctx.globalAlpha = baseAlpha * 0.95; // 边缘高亮
-                            size *= 1.25; 
-                        } else if (nz2_n < 0) {
-                            // 【正面表面效果】 (指向相机的面)
-                            if (dotLight > 0.6) {
-                                // 【镜面高光反射】
+                            alpha = 0.95;
+                            size *= 1.3;
+                        } else if (this.renderNZ < 0) {
+                            // 正对你的半球 (前表面)
+                            if (dotLight > 0.4) {
+                                // 接受到光照，产生高光
                                 activeTexture = textures.highlight;
-                                let intensity = (dotLight - 0.6) / 0.4; // 规范化 0-1
-                                ctx.globalAlpha = baseAlpha * (0.6 + 0.4 * intensity);
-                                size *= (1.0 + 0.5 * intensity); // 高光处光晕更大
+                                let intensity = (dotLight - 0.4) / 0.6; // 0~1
+                                alpha = 0.6 + 0.4 * intensity;
+                                size *= (1.0 + 0.5 * intensity);
                             } else {
-                                // 普通漫反射
+                                // 正常的漫反射表面
                                 activeTexture = textures.base;
-                                ctx.globalAlpha = baseAlpha * 0.7;
+                                alpha = 0.6;
                             }
                         } else {
-                            // 【背面剔除阴影】 (背对相机的面)
+                            // 背对你的半球 (背表面剔除阴影)
                             activeTexture = textures.base;
-                            ctx.globalAlpha = baseAlpha * 0.15; // 极度暗淡，产生深邃体积感
-                            size *= 0.6; 
+                            alpha = 0.08; // 极度暗淡，保证内部深邃的晶莹剔透感
+                            size *= 0.6;
                         }
 
-                        size = Math.min(textures.base.width * 6, size);
+                        ctx.globalAlpha = alpha;
                         ctx.drawImage(activeTexture, canvasX - size / 2, canvasY - size / 2, size, size);
                     }
                 }
 
-                class ParticlePool {
-                    constructor(length) {
-                        this.particles = Array.from({length}, () => new Particle());
-                        this.firstActive = 0; this.firstFree = 0;
-                        this.duration = settings.particles.duration;
-                    }
-                    add(x, y, z, dx, dy, dz) {
-                        this.particles[this.firstFree].initialize(x, y, z, dx, dy, dz);
-                        this.firstFree = (this.firstFree + 1) % this.particles.length;
-                        if (this.firstActive === this.firstFree) this.firstActive = (this.firstActive + 1) % this.particles.length;
-                    }
-                    update(deltaTime, mouse, angleX, angleY, centerX, centerY, pulse) {
-                        let i = this.firstActive;
-                        while (i !== this.firstFree) {
-                            this.particles[i].update(deltaTime, mouse, angleX, angleY, centerX, centerY, pulse);
-                            i = (i + 1) % this.particles.length;
-                        }
-                        while (this.particles[this.firstActive].age >= this.duration && this.firstActive !== this.firstFree) {
-                            this.firstActive = (this.firstActive + 1) % this.particles.length;
-                        }
-                    }
-                    draw(ctx, textures, angleX, angleY, centerX, centerY, pulse) {
-                        let i = this.firstActive;
-                        while (i !== this.firstFree) {
-                            this.particles[i].draw(ctx, textures, angleX, angleY, centerX, centerY, pulse);
-                            i = (i + 1) % this.particles.length;
-                        }
-                    }
-                }
+                // --- 完美数学：生成 Taubin Heart ---
+                const generateTaubinHeart = () => {
+                    const points = [];
+                    const numParticles = window.innerWidth < 768 ? 4000 : 7000;
+                    const scale = window.innerWidth < 768 ? 95 : 130;
 
-                const particles = new ParticlePool(settings.particles.length);
-                const particleRate = settings.particles.length / settings.particles.duration;
+                    // 拒取采样生成分布在 3D 爱心外壳表面的粒子
+                    while (points.length < numParticles) {
+                        let tx = (Math.random() - 0.5) * 3;
+                        let ty = (Math.random() - 0.5) * 3;
+                        let tz = (Math.random() - 0.5) * 3;
+                        
+                        let tx2 = tx*tx, ty2 = ty*ty, tz2 = tz*tz;
+                        let term = tx2 + 2.25*ty2 + tz2 - 1;
+                        let f = term*term*term - tx2*tz2*tz - 0.1125*ty2*tz2*tz;
+                        
+                        // 提取表面薄层结构 (-0.2 ~ 0)
+                        if (f <= 0.0 && f >= -0.2) { 
+                            // 借助偏导数精确计算法线
+                            let term2 = 3 * term * term;
+                            let nx = term2 * 2 * tx - 2 * tx * tz2*tz;
+                            let ny = term2 * 4.5 * ty - 0.225 * ty * tz2*tz;
+                            let nz = term2 * 2 * tz - 3 * tx2 * tz2 - 0.3375 * ty2 * tz2;
+                            
+                            points.push(new StaticParticle(tx, ty, tz, nx, ny, nz, scale));
+                        }
+                    }
+                    return points;
+                };
+
+                const particles = generateTaubinHeart();
                 let time;
 
-                // 核心：创建三种不同材质的贴图
-                const createTexture = (color0, color1, scaleMultiplier = 3) => {
+                const createTexture = (color0, color1, scaleMultiplier) => {
                     const tCanvas = document.createElement('canvas');
-                    tCanvas.width = tCanvas.height = settings.particles.size * scaleMultiplier;
+                    tCanvas.width = tCanvas.height = 2.0 * scaleMultiplier;
                     const tCtx = tCanvas.getContext('2d');
                     const center = tCanvas.width / 2;
                     const grd = tCtx.createRadialGradient(center, center, 0, center, center, center);
@@ -298,10 +250,8 @@
 
                 const textures = {
                     base: createTexture('rgba(255, 30, 70, 1)', 'rgba(255, 30, 70, 0)', 3),
-                    // 描边边缘用高亮的橙红色
                     edge: createTexture('rgba(255, 70, 100, 1)', 'rgba(255, 0, 40, 0)', 3.5),
-                    // 高光处用粉白色模拟晶莹剔透感
-                    highlight: createTexture('rgba(255, 230, 240, 1)', 'rgba(255, 100, 150, 0)', 4)
+                    highlight: createTexture('rgba(255, 240, 245, 1)', 'rgba(255, 120, 160, 0)', 4.5)
                 };
 
                 let smoothTilt = { x: 0, y: 0 };
@@ -309,56 +259,51 @@
                 const render = () => {
                     animationFrameId = requestAnimationFrame(render);
                     const newTime = Date.now() / 1000;
-                    const deltaTime = newTime - (time || newTime);
                     time = newTime;
                     
-                    ctx.fillStyle = 'rgba(5, 5, 5, 0.23)';
+                    // 彻底干脆地清空画布，绝对无拖尾
+                    ctx.fillStyle = '#050505';
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                    smoothTilt.x += (tiltRef.current.x - smoothTilt.x) * 0.1;
-                    smoothTilt.y += (tiltRef.current.y - smoothTilt.y) * 0.1;
+                    // 如果未开启陀螺仪，用鼠标位置模拟轻微倾斜
+                    let targetTiltX = tiltRef.current.x;
+                    let targetTiltY = tiltRef.current.y;
+                    if (!initialized && mouseRef.current.active) {
+                        targetTiltX = (mouseRef.current.x - canvas.width/2) * 0.1;
+                        targetTiltY = -(mouseRef.current.y - canvas.height/2) * 0.1;
+                    }
+
+                    smoothTilt.x += (targetTiltX - smoothTilt.x) * 0.1;
+                    smoothTilt.y += (targetTiltY - smoothTilt.y) * 0.1;
 
                     if (uiRef.current) {
-                        uiRef.current.style.transform = `translate3d(${-smoothTilt.x * 0.6}px, ${-smoothTilt.y * 0.6}px, 0)`;
+                        uiRef.current.style.transform = `translate3d(${-smoothTilt.x * 0.8}px, ${smoothTilt.y * 0.8}px, 0)`;
                     }
 
                     const centerX = canvas.width / 2;
-                    const centerY = canvas.height / 2 - 40;
+                    const centerY = canvas.height / 2 - 30;
                     
                     const distToMouse = Math.sqrt(Math.pow(mouseRef.current.x - centerX, 2) + Math.pow(mouseRef.current.y - centerY, 2));
                     const targetBpm = distToMouse < 180 ? 122 : 68;
                     setBpm(b => b + (targetBpm - b) * 0.05);
 
-                    const pulse = 1 + Math.sin(time * (bpm / 12)) * 0.08;
-                    const amount = particleRate * deltaTime;
+                    // 整体脉搏缩放
+                    const pulse = 1 + Math.sin(time * (bpm / 12)) * 0.06;
                     
-                    const angleY = -smoothTilt.x * (Math.PI / 180) * 1.5; 
-                    const angleX = smoothTilt.y * (Math.PI / 180) * 1.5; 
+                    // 摄像机视差偏移 (保持高级窗口感)
+                    const angleY = -smoothTilt.x * (Math.PI / 180) * 1.2; 
+                    const angleX = smoothTilt.y * (Math.PI / 180) * 1.2; 
+                    const renderCenterX = centerX - smoothTilt.x * 2.5;
+                    const renderCenterY = centerY + smoothTilt.y * 2.5;
 
-                    const renderCenterX = centerX - smoothTilt.x * 2.0;
-                    const renderCenterY = centerY - smoothTilt.y * 2.0;
+                    // 1. 全局计算所有粒子的 3D 旋转状态
+                    particles.forEach(p => p.update3D(angleX, angleY, pulse));
 
-                    for (let i = 0; i < amount; i++) {
-                        const t = 2 * Math.PI * Math.random();
-                        // 随机 p 从 0 到 2π，形成完整的 3D 气球体
-                        const p = 2 * Math.PI * Math.random(); 
-                        
-                        const pos3D = pointOnHeart3D(t, p);
-                        
-                        const isCore = Math.random() > 0.15; 
-                        const vMult = isCore ? (Math.random() * 2) : (Math.random() * 30 + 5);
-                        
-                        const len2D = Math.sqrt(pos3D.x * pos3D.x + pos3D.y * pos3D.y + pos3D.z * pos3D.z) || 1;
-                        const vx = (pos3D.x / len2D) * vMult;
-                        const vy = (pos3D.y / len2D) * vMult;
-                        const vz = (pos3D.z / len2D) * vMult; 
+                    // 2. 深度排序 (Z-Sorting)：先画距离远的，再画距离近的，实现正确的 3D 遮挡
+                    particles.sort((a, b) => b.renderZ - a.renderZ);
 
-                        particles.add(pos3D.x, pos3D.y, pos3D.z, vx, vy, vz);
-                    }
-                    
-                    particles.update(deltaTime, mouseRef.current, angleX, angleY, renderCenterX, renderCenterY, pulse);
-                    // 传入贴图集合进行高级渲染
-                    particles.draw(ctx, textures, angleX, angleY, renderCenterX, renderCenterY, pulse);
+                    // 3. 渲染
+                    particles.forEach(p => p.draw(ctx, textures, renderCenterX, renderCenterY, mouseRef.current));
                 };
 
                 render();
