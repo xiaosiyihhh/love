@@ -77,12 +77,13 @@
                 const ctx = canvas.getContext('2d');
                 let animationFrameId;
 
+                // 调整了粒子的扩散属性，使其更加紧凑
                 const settings = {
                     particles: { 
                         length: window.innerWidth < 768 ? 2200 : 3800,
-                        duration: 2.5, 
-                        velocity: 85, 
-                        effect: -0.6, 
+                        duration: 2.1,  // 略微缩短存活时间，防止飞太远
+                        velocity: 35,   // 大幅降低初速度，减少扩散
+                        effect: -0.5,   // 调整回拉力矩，与低速相匹配
                         size: window.innerWidth < 768 ? 1.6 : 2.0
                     },
                     interaction: { radius: 110, strength: 120 } 
