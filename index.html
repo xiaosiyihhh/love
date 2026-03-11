@@ -81,7 +81,7 @@
                         this.type = type; 
 
                         this.densityThreshold = Math.random(); 
-                        this.randomScale = Math.random() * 0.4 + 0.6;
+                        this.randomScale = Math.random() * 0.3 + 0.7; // 让粒子大小更均匀，避免杂乱
                         
                         this.renderX = 0; this.renderY = 0; this.renderZ = 0;
                         this.renderNX = 0; this.renderNY = 0; this.renderNZ = 0;
@@ -96,11 +96,9 @@
                         let pz = this.baseZ;
 
                         if (this.type === 0) {
-                            // 构型组：伴随全局能量产生极微弱的整体缩放，维持生命感
                             let pulse = 1 + globalBeat * 0.03;
                             px *= pulse; py *= pulse; pz *= pulse;
                         } else if (this.type === 1) {
-                            // 脉冲组：沿着法线平滑外推
                             let offset = globalBeat * 25.0 * this.randomScale;
                             px += this.nx * offset;
                             py += this.ny * offset;
@@ -132,48 +130,42 @@
                         let canvasY = centerY + this.renderY * perspective;
 
                         if (this.type === 0) {
-                            // 【修正的光照逻辑】
-                            // 设定光源在右上方偏前 (lx: 正=右, ly: 负=上, lz: 负=朝向观察者)
-                            const lx = 0.6, ly = -0.6, lz = -0.6; 
+                            // 【优化：光源严格设定在右侧偏上偏前】
+                            const lx = 0.8, ly = -0.8, lz = -0.4; 
                             const lLen = Math.sqrt(lx*lx + ly*ly + lz*lz);
                             const nLx = lx/lLen, nLy = ly/lLen, nLz = lz/lLen;
                             
                             const dotLight = this.renderNX * nLx + this.renderNY * nLy + this.renderNZ * nLz;
                             
                             let lightIntensity = Math.max(0, dotLight);
-                            // 强化边缘判定，使得即使不迎光也能勾勒出清晰的轮廓
-                            let edgeIntensity = Math.pow(1.0 - Math.abs(this.renderNZ), 3.0);
+                            let edgeIntensity = Math.pow(1.0 - Math.abs(this.renderNZ), 2.5);
 
-                            let targetDensity = 0.0; 
+                            let targetDensity = 0.02; // 极低的暗部基础密度，维持最基础的形态
                             
                             if (this.renderNZ < 0) { 
-                                // 【前表面】
-                                targetDensity += Math.pow(lightIntensity, 1.2) * 1.0; // 迎光面密集
-                                targetDensity += 0.1; // 基础环境可见度，避免阴影处彻底变成黑洞
-                                targetDensity += edgeIntensity * 0.4; // 边缘描边
+                                // 迎光面：光照越强，密度呈指数级上升，形成非常平滑的明暗过渡
+                                targetDensity += Math.pow(lightIntensity, 1.5) * 0.95; 
+                                targetDensity += edgeIntensity * 0.25; 
                             } else { 
-                                // 【后表面】 
-                                // 完全干脆地剔除背光面主体，只保留极细的轮廓透视线
-                                targetDensity += edgeIntensity * 0.05; 
+                                // 背光面：只保留微弱的轮廓线
+                                targetDensity += edgeIntensity * 0.15; 
                             }
 
                             let visibleFactor = targetDensity - this.densityThreshold;
                             let targetAlpha = 0;
                             
-                            // 增强透明度的斜率，使粒子要么清晰显示，要么不显示，彻底告别“糊成一团”
                             if (visibleFactor > 0) {
                                 targetAlpha = Math.min(1.0, visibleFactor * 8.0) * 0.95;
                             }
 
                             this.currentAlpha += (targetAlpha - this.currentAlpha) * 0.15;
 
-                            if (this.currentAlpha > 0.05) {
+                            if (this.currentAlpha > 0.02) {
                                 ctx.globalAlpha = this.currentAlpha;
                                 let size = texture.width * perspective * this.randomScale;
                                 ctx.drawImage(texture, canvasX - size / 2, canvasY - size / 2, size, size);
                             }
                         } else if (this.type === 1) {
-                            // 呼吸脉冲组只在前表面展示，避免穿模视觉污染
                             if (this.renderNZ < 0.1) { 
                                 ctx.globalAlpha = this.beatAlpha * this.randomScale;
                                 let size = texture.width * perspective * this.randomScale * (1.1 + globalBeat * 0.4);
@@ -185,30 +177,33 @@
 
                 const generateTaubinHeart = () => {
                     const points = [];
-                    // 粒子数量调优：由于去除了内部无效粒子，现在表面的粒子会更加集中清晰
-                    const numCoreParticles = window.innerWidth < 768 ? 8000 : 14000; 
+                    const numCoreParticles = window.innerWidth < 768 ? 4000 : 7000; 
                     const numBeatParticles = window.innerWidth < 768 ? 1000 : 1500; 
                     
                     const scale = window.innerWidth < 768 ? 180 : 250; 
                     const totalParticles = numCoreParticles + numBeatParticles;
 
-                    // 缩小随机采样的包围盒以加快生成速度
                     while (points.length < totalParticles) {
-                        let tx = (Math.random() - 0.5) * 2.6;
-                        let ty = (Math.random() - 0.5) * 1.5;
-                        let tz = (Math.random() - 0.5) * 2.6;
+                        // 扩大采样范围以确保完整覆盖
+                        let tx = (Math.random() - 0.5) * 3.0;
+                        let ty = (Math.random() - 0.5) * 3.0;
+                        let tz = (Math.random() - 0.5) * 3.0;
                         
                         let tx2 = tx*tx, ty2 = ty*ty, tz2 = tz*tz;
                         let term = tx2 + 2.25*ty2 + tz2 - 1;
                         let f = term*term*term - tx2*tz2*tz - 0.1125*ty2*tz2*tz;
                         
-                        // 【极其关键的修改】：从 -0.15 缩小到 -0.03
-                        // 强制构造一个绝对中空的极薄曲面壳，杜绝内部杂乱粒子堆积
-                        if (f <= 0.0 && f >= -0.03) { 
+                        if (f <= 0.0 && f >= -0.06) { 
                             let term2 = 3 * term * term;
                             let nx = term2 * 2 * tx - 2 * tx * tz2*tz;
                             let ny = term2 * 4.5 * ty - 0.225 * ty * tz2*tz;
                             let nz = term2 * 2 * tz - 3 * tx2 * tz2 - 0.3375 * ty2 * tz2;
+                            
+                            // 【核心修复：法线曲率梯度归一化】
+                            // 解决由于 Taubin 方程几何特性导致的“顶部和底部堆积大量粒子”问题
+                            let gradLen = Math.sqrt(nx*nx + ny*ny + nz*nz);
+                            // 如果梯度过小（说明是极易堆积粒子的平缓曲面区域），直接拒取
+                            if (gradLen === 0 || Math.random() * 12 > gradLen) continue; 
                             
                             const type = points.length < numCoreParticles ? 0 : 1;
                             points.push(new DualSystemParticle(tx, ty, tz, nx, ny, nz, scale, type));
@@ -220,7 +215,6 @@
                 const particles = generateTaubinHeart();
                 let time;
 
-                // 缩小粒子基础画布大小，让点阵更加锐利精细
                 const createPureParticle = () => {
                     const tCanvas = document.createElement('canvas');
                     tCanvas.width = tCanvas.height = 3;
@@ -250,7 +244,7 @@
                     smoothTilt.y += (targetTiltY - smoothTilt.y) * 0.05;
 
                     if (uiRef.current) {
-                        uiRef.current.style.transform = `translate3d(${-smoothTilt.x * 0.5}px, ${smoothTilt.y * 0.5}px, 0)`;
+                        uiRef.current.style.transform = `translate3d(${smoothTilt.x * 0.8}px, ${-smoothTilt.y * 0.8}px, 0)`;
                     }
 
                     const centerX = canvas.width / 2;
@@ -264,13 +258,13 @@
                     
                     let globalBeat = Math.pow((Math.sin(phase - Math.PI / 2) + 1) / 2, 1.5);
 
-                    const angleY = -smoothTilt.x * (Math.PI / 180) * 1.0; 
-                    const angleX = smoothTilt.y * (Math.PI / 180) * 1.0; 
-                    const renderCenterX = centerX - smoothTilt.x * 1.5;
-                    const renderCenterY = centerY + smoothTilt.y * 1.5;
+                    const angleY = smoothTilt.x * (Math.PI / 180) * 1.4; 
+                    const angleX = -smoothTilt.y * (Math.PI / 180) * 1.4; 
+                    
+                    const renderCenterX = centerX - smoothTilt.x * 2.2;
+                    const renderCenterY = centerY + smoothTilt.y * 2.2;
 
                     particles.forEach(p => p.update3D(angleX, angleY, globalBeat));
-                    // 深度排序依然保留，确保边缘交界处的正确遮挡
                     particles.sort((a, b) => b.renderZ - a.renderZ);
                     particles.forEach(p => p.draw(ctx, pureTexture, renderCenterX, renderCenterY, globalBeat));
                 };
