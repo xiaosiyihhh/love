@@ -98,7 +98,6 @@
                 // 核心升级：3D 粒子生成函数
                 const pointOnHeart3D = (t, p) => {
                     const scale = window.innerWidth < 768 ? 0.75 : 1.1;
-                    // X 和 Y 构建爱心的二维切面
                     const baseX = 16 * Math.pow(Math.sin(t), 3);
                     const baseY = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 3 * Math.cos(3 * t) - Math.cos(4 * t);
                     // Z 轴增加纵深，构建 3D 曲面体积感
@@ -106,57 +105,95 @@
 
                     return {
                         x: baseX * 11.25 * scale,
-                        y: baseY * 11.5 * scale, // 保持数学正向 Y，稍后在 Canvas 里反转
+                        y: baseY * 11.5 * scale,
                         z: z * 11.25 * scale
                     };
                 };
 
+                // 核心升级：将粒子赋予真正的 3D 属性
                 class Particle {
                     constructor() {
-                        this.position = { x: 0, y: 0 };
-                        this.velocity = { x: 0, y: 0 };
-                        this.acceleration = { x: 0, y: 0 };
+                        this.position = { x: 0, y: 0, z: 0 };
+                        this.velocity = { x: 0, y: 0, z: 0 };
+                        this.acceleration = { x: 0, y: 0, z: 0 };
                         this.age = 0;
                         this.randomScale = Math.random() * 0.5 + 0.5;
                     }
-                    initialize(x, y, dx, dy, perspectiveScale) {
-                        this.position.x = x; this.position.y = y;
-                        this.velocity.x = dx; this.velocity.y = dy;
+                    initialize(x, y, z, dx, dy, dz) {
+                        this.position.x = x; this.position.y = y; this.position.z = z;
+                        this.velocity.x = dx; this.velocity.y = dy; this.velocity.z = dz;
                         this.acceleration.x = dx * settings.particles.effect;
                         this.acceleration.y = dy * settings.particles.effect;
+                        this.acceleration.z = dz * settings.particles.effect;
                         this.age = 0;
-                        // 距离屏幕越近的粒子，初始尺寸略微放大，增强 3D 视觉感
-                        this.perspectiveScale = perspectiveScale; 
+                        this.duration = settings.particles.duration;
                     }
-                    update(deltaTime, mouse, offsetX, offsetY) {
+                    update(deltaTime, mouse, angleX, angleY, centerX, centerY, pulse) {
+                        // 1. 在 3D 空间中更新物理位置
                         this.position.x += this.velocity.x * deltaTime;
                         this.position.y += this.velocity.y * deltaTime;
+                        this.position.z += this.velocity.z * deltaTime;
+                        
                         this.velocity.x += this.acceleration.x * deltaTime;
                         this.velocity.y += this.acceleration.y * deltaTime;
+                        this.velocity.z += this.acceleration.z * deltaTime;
+                        
                         this.age += deltaTime;
 
+                        // 2. 将 3D 坐标投影到 2D 屏幕以计算鼠标碰撞交互
                         if (mouse.active) {
-                            const drawnX = this.position.x + offsetX;
-                            const drawnY = this.position.y + offsetY;
-                            const dx = drawnX - mouse.x;
-                            const dy = drawnY - mouse.y;
-                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            let px = this.position.x * pulse;
+                            let py = this.position.y * pulse;
+                            let pz = this.position.z * pulse;
+
+                            let y1 = py * Math.cos(angleX) - pz * Math.sin(angleX);
+                            let z1 = py * Math.sin(angleX) + pz * Math.cos(angleX);
+                            let x2 = px * Math.cos(angleY) - z1 * Math.sin(angleY);
+                            let z2 = px * Math.sin(angleY) + z1 * Math.cos(angleY);
+
+                            let perspective = 300 / (300 + z2);
+                            let canvasX = centerX + x2 * perspective;
+                            let canvasY = centerY - y1 * perspective;
+
+                            let dx = canvasX - mouse.x;
+                            let dy = canvasY - mouse.y;
+                            let distance = Math.sqrt(dx * dx + dy * dy);
                             
                             if (distance < settings.interaction.radius) {
                                 const safeDistance = Math.max(1, distance);
                                 const force = (settings.interaction.radius - distance) / settings.interaction.radius;
+                                // 交互力近似反馈回 3D 空间
                                 this.position.x += (dx / safeDistance) * force * settings.interaction.strength * deltaTime;
-                                this.position.y += (dy / safeDistance) * force * settings.interaction.strength * deltaTime;
+                                this.position.y -= (dy / safeDistance) * force * settings.interaction.strength * deltaTime;
                             }
                         }
                     }
-                    draw(ctx, image, offsetX, offsetY) {
+                    draw(ctx, image, angleX, angleY, centerX, centerY, pulse) {
                         const ease = (t) => (--t) * t * t + 1;
-                        const progress = this.age / settings.particles.duration;
-                        // 应用透视缩放比例
-                        const size = image.width * ease(progress) * this.randomScale * this.perspectiveScale;
+                        const progress = this.age / this.duration;
+
+                        // 应用心跳缩放
+                        let px = this.position.x * pulse;
+                        let py = this.position.y * pulse;
+                        let pz = this.position.z * pulse;
+
+                        // 核心：应用陀螺仪 3D 旋转矩阵
+                        // 绕 X 轴旋转 (上下倾斜)
+                        let y1 = py * Math.cos(angleX) - pz * Math.sin(angleX);
+                        let z1 = py * Math.sin(angleX) + pz * Math.cos(angleX);
+
+                        // 绕 Y 轴旋转 (左右倾斜)
+                        let x2 = px * Math.cos(angleY) - z1 * Math.sin(angleY);
+                        let z2 = px * Math.sin(angleY) + z1 * Math.cos(angleY);
+
+                        // 3D 透视投影
+                        const perspective = 300 / (300 + z2);
+                        const canvasX = centerX + x2 * perspective;
+                        const canvasY = centerY - y1 * perspective;
+
+                        const size = image.width * ease(progress) * this.randomScale * perspective;
                         ctx.globalAlpha = (1 - progress) * 0.8;
-                        ctx.drawImage(image, this.position.x - size / 2 + offsetX, this.position.y - size / 2 + offsetY, size, size);
+                        ctx.drawImage(image, canvasX - size / 2, canvasY - size / 2, size, size);
                     }
                 }
 
@@ -166,25 +203,25 @@
                         this.firstActive = 0; this.firstFree = 0;
                         this.duration = settings.particles.duration;
                     }
-                    add(x, y, dx, dy, perspectiveScale) {
-                        this.particles[this.firstFree].initialize(x, y, dx, dy, perspectiveScale);
+                    add(x, y, z, dx, dy, dz) {
+                        this.particles[this.firstFree].initialize(x, y, z, dx, dy, dz);
                         this.firstFree = (this.firstFree + 1) % this.particles.length;
                         if (this.firstActive === this.firstFree) this.firstActive = (this.firstActive + 1) % this.particles.length;
                     }
-                    update(deltaTime, mouse, offsetX, offsetY) {
+                    update(deltaTime, mouse, angleX, angleY, centerX, centerY, pulse) {
                         let i = this.firstActive;
                         while (i !== this.firstFree) {
-                            this.particles[i].update(deltaTime, mouse, offsetX, offsetY);
+                            this.particles[i].update(deltaTime, mouse, angleX, angleY, centerX, centerY, pulse);
                             i = (i + 1) % this.particles.length;
                         }
                         while (this.particles[this.firstActive].age >= this.duration && this.firstActive !== this.firstFree) {
                             this.firstActive = (this.firstActive + 1) % this.particles.length;
                         }
                     }
-                    draw(ctx, image, offsetX, offsetY) {
+                    draw(ctx, image, angleX, angleY, centerX, centerY, pulse) {
                         let i = this.firstActive;
                         while (i !== this.firstFree) {
-                            this.particles[i].draw(ctx, image, offsetX, offsetY);
+                            this.particles[i].draw(ctx, image, angleX, angleY, centerX, centerY, pulse);
                             i = (i + 1) % this.particles.length;
                         }
                     }
@@ -221,65 +258,46 @@
                     smoothTilt.x += (tiltRef.current.x - smoothTilt.x) * 0.1;
                     smoothTilt.y += (tiltRef.current.y - smoothTilt.y) * 0.1;
 
-                    // UI 仅作轻微的平移视差
+                    // UI 仅保留非常微弱的视差平移，不再整体跟随
                     if (uiRef.current) {
-                        uiRef.current.style.transform = `translate3d(${smoothTilt.x * 0.5}px, ${smoothTilt.y * 0.5}px, 0)`;
+                        uiRef.current.style.transform = `translate3d(${smoothTilt.x * 0.1}px, ${smoothTilt.y * 0.1}px, 0)`;
                     }
 
                     const centerX = canvas.width / 2;
                     const centerY = canvas.height / 2 - 40;
                     
                     // 互动心跳加速
-                    const distToMouse = Math.sqrt(Math.pow(mouseRef.current.x - (centerX + smoothTilt.x*0.5), 2) + Math.pow(mouseRef.current.y - (centerY + smoothTilt.y*0.5), 2));
+                    const distToMouse = Math.sqrt(Math.pow(mouseRef.current.x - centerX, 2) + Math.pow(mouseRef.current.y - centerY, 2));
                     const targetBpm = distToMouse < 180 ? 122 : 68;
                     setBpm(b => b + (targetBpm - b) * 0.05);
 
                     const pulse = 1 + Math.sin(time * (bpm / 12)) * 0.08;
                     const amount = particleRate * deltaTime;
                     
-                    // 将陀螺仪倾斜转化为 3D 旋转弧度
-                    const angleY = smoothTilt.x * 0.025; // 左右旋转
-                    const angleX = -smoothTilt.y * 0.025; // 上下旋转
+                    // 将陀螺仪倾斜转化为 3D 旋转弧度 (放大系数以增强立体感)
+                    const angleY = smoothTilt.x * 0.035; 
+                    const angleX = -smoothTilt.y * 0.035; 
 
                     for (let i = 0; i < amount; i++) {
                         const t = 2 * Math.PI * Math.random();
                         const p = 2 * Math.PI * Math.random();
                         
-                        // 1. 获取 3D 爱心表面坐标
+                        // 获取 3D 基础坐标
                         const pos3D = pointOnHeart3D(t, p);
                         
-                        // 2. 绕 Y 轴旋转 (实现左右晃动展现 3D 侧面)
-                        let x1 = pos3D.x * Math.cos(angleY) - pos3D.z * Math.sin(angleY);
-                        let z1 = pos3D.x * Math.sin(angleY) + pos3D.z * Math.cos(angleY);
+                        // 计算基于中心的向外法线速度，使粒子向 3D 空间各个方向爆开
+                        const len = Math.sqrt(pos3D.x * pos3D.x + pos3D.y * pos3D.y + pos3D.z * pos3D.z) || 1;
+                        const vx = (pos3D.x / len) * settings.particles.velocity;
+                        const vy = (pos3D.y / len) * settings.particles.velocity;
+                        const vz = (pos3D.z / len) * settings.particles.velocity;
 
-                        // 3. 绕 X 轴旋转 (实现上下晃动展现顶部/底部)
-                        let y1 = pos3D.y * Math.cos(angleX) - z1 * Math.sin(angleX);
-                        let z2 = pos3D.y * Math.sin(angleX) + z1 * Math.cos(angleX);
-
-                        // 4. 应用心跳缩放
-                        x1 *= pulse;
-                        y1 *= pulse;
-                        z2 *= pulse;
-
-                        // 5. 3D 透视投影 (Perspective Projection)
-                        // z2 代表深度，距离越近 (正值) 粒子越大并稍微偏移
-                        const perspective = 300 / (300 + z2);
-                        const canvasX = x1 * perspective;
-                        const canvasY = -y1 * perspective; // 反转 Y 轴以匹配 Canvas 坐标系
-
-                        const len = Math.sqrt(canvasX * canvasX + canvasY * canvasY) || 1;
-                        
-                        particles.add(
-                            centerX + canvasX, 
-                            centerY + canvasY, 
-                            (canvasX / len) * settings.particles.velocity, 
-                            (canvasY / len) * settings.particles.velocity,
-                            perspective // 传递透视比例给粒子
-                        );
+                        // 将带有真实 3D 坐标的粒子放入池中
+                        particles.add(pos3D.x, pos3D.y, pos3D.z, vx, vy, vz);
                     }
                     
-                    particles.update(deltaTime, mouseRef.current, smoothTilt.x * 0.5, smoothTilt.y * 0.5);
-                    particles.draw(ctx, texture, smoothTilt.x * 0.5, smoothTilt.y * 0.5);
+                    // 统一传递 3D 矩阵信息进行渲染
+                    particles.update(deltaTime, mouseRef.current, angleX, angleY, centerX, centerY, pulse);
+                    particles.draw(ctx, texture, angleX, angleY, centerX, centerY, pulse);
                 };
 
                 render();
@@ -316,12 +334,12 @@
                             </div>
                         </nav>
 
-                        {/* 修正后的自适应文字容器：防止溢出并强制不换行 */}
-                        <div className="absolute top-[65%] md:top-[70%] left-1/2 -translate-x-1/2 flex flex-col items-center justify-center w-full px-4 animate-fade">
-                            <div className="flex items-center justify-center gap-2 sm:gap-4 md:gap-8 text-2xl sm:text-4xl md:text-6xl font-black tracking-[0.1em] sm:tracking-[0.2em] text-white/95 drop-shadow-[0_0_25px_rgba(255,30,70,0.5)] whitespace-nowrap">
-                                <span>XIAO</span>
-                                <i data-lucide="heart" className="w-8 h-8 sm:w-10 sm:h-10 md:w-16 md:h-16 text-red-500 fill-red-500 animate-pulse shrink-0"></i>
-                                <span>DING</span>
+                        {/* 修正：使用 max-w-[100vw] 防止溢出，并使用相对单位 (clamp) 让字体自适应任何小尺寸屏幕 */}
+                        <div className="absolute top-[65%] md:top-[70%] left-1/2 -translate-x-1/2 flex flex-col items-center justify-center w-full max-w-[100vw] px-4 box-border animate-fade">
+                            <div className="flex items-center justify-center gap-2 sm:gap-4 md:gap-8 font-black text-white/95 drop-shadow-[0_0_25px_rgba(255,30,70,0.5)]">
+                                <span className="text-[clamp(1.8rem,7vw,3.75rem)] tracking-[0.1em] sm:tracking-[0.2em]">XIAO</span>
+                                <i data-lucide="heart" className="w-[clamp(2rem,6vw,4rem)] h-[clamp(2rem,6vw,4rem)] text-red-500 fill-red-500 animate-pulse shrink-0"></i>
+                                <span className="text-[clamp(1.8rem,7vw,3.75rem)] tracking-[0.1em] sm:tracking-[0.2em]">DING</span>
                             </div>
                             <div className="h-[1px] w-32 md:w-64 bg-gradient-to-r from-transparent via-red-500/30 to-transparent mt-4 md:mt-8" />
                         </div>
