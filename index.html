@@ -17,11 +17,14 @@
         body { margin: 0; background-color: #050505; overflow: hidden; touch-action: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         canvas { display: block; }
         @keyframes fade-in {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
+            from { opacity: 0; transform: scale(0.95) translateX(-50%); }
+            to { opacity: 1; transform: scale(1) translateX(-50%); }
         }
-        .animate-fade { animation: fade-in 1.5s ease-out forwards; }
-        /* 性能优化：硬件加速位移 */
+        .animate-fade { 
+            /* 修正居中动画导致的位移偏差 */
+            animation: fade-in 1.5s ease-out forwards; 
+            transform-origin: left center;
+        }
         #ui-wrapper {
             will-change: transform;
             transform-style: preserve-3d;
@@ -64,10 +67,10 @@
                 let x = event.gamma || 0; 
                 let y = event.beta || 0;
                 
-                // 限制并平滑感应数值
+                // 限制并平滑感应数值，加大乘数以提升跟随感
                 tiltRef.current = {
-                    x: Math.max(-25, Math.min(25, x)) * 2.5,
-                    y: Math.max(-25, Math.min(25, y - 45)) * 2.5
+                    x: Math.max(-30, Math.min(30, x)) * 3.0,
+                    y: Math.max(-30, Math.min(30, y - 45)) * 3.0
                 };
             };
 
@@ -84,7 +87,7 @@
                         effect: -0.6, 
                         size: window.innerWidth < 768 ? 1.6 : 2.0
                     },
-                    interaction: { radius: 110, strength: 120 } // 修正后的物理强度
+                    interaction: { radius: 110, strength: 120 } 
                 };
 
                 const resize = () => {
@@ -117,7 +120,7 @@
                         this.acceleration.y = dy * settings.particles.effect;
                         this.age = 0;
                     }
-                    update(deltaTime, mouse) {
+                    update(deltaTime, mouse, offsetX, offsetY) {
                         this.position.x += this.velocity.x * deltaTime;
                         this.position.y += this.velocity.y * deltaTime;
                         this.velocity.x += this.acceleration.x * deltaTime;
@@ -125,23 +128,29 @@
                         this.age += deltaTime;
 
                         if (mouse.active) {
-                            const dx = this.position.x - mouse.x;
-                            const dy = this.position.y - mouse.y;
+                            // 问题2修复：加入 offsetX 和 offsetY，使鼠标与陀螺仪偏移后的位置对齐
+                            const drawnX = this.position.x + offsetX;
+                            const drawnY = this.position.y + offsetY;
+                            const dx = drawnX - mouse.x;
+                            const dy = drawnY - mouse.y;
                             const distance = Math.sqrt(dx * dx + dy * dy);
+                            
                             if (distance < settings.interaction.radius) {
-                                // 修复：加入 deltaTime 确保物理模拟在不同帧率下稳定，防止粒子瞬间飞出
+                                // 问题2修复：加入 Math.max(1, distance) 防止因为除以 0 导致粒子坐标变为 NaN 从而消失
+                                const safeDistance = Math.max(1, distance);
                                 const force = (settings.interaction.radius - distance) / settings.interaction.radius;
-                                this.position.x += (dx / distance) * force * settings.interaction.strength * deltaTime;
-                                this.position.y += (dy / distance) * force * settings.interaction.strength * deltaTime;
+                                this.position.x += (dx / safeDistance) * force * settings.interaction.strength * deltaTime;
+                                this.position.y += (dy / safeDistance) * force * settings.interaction.strength * deltaTime;
                             }
                         }
                     }
-                    draw(ctx, image) {
+                    draw(ctx, image, offsetX, offsetY) {
                         const ease = (t) => (--t) * t * t + 1;
                         const progress = this.age / settings.particles.duration;
                         const size = image.width * ease(progress) * this.randomScale;
                         ctx.globalAlpha = (1 - progress) * 0.8;
-                        ctx.drawImage(image, this.position.x - size / 2, this.position.y - size / 2, size, size);
+                        // 问题1修复：在最终渲染阶段加上陀螺仪偏移量，实现整体平移
+                        ctx.drawImage(image, this.position.x - size / 2 + offsetX, this.position.y - size / 2 + offsetY, size, size);
                     }
                 }
 
@@ -156,20 +165,20 @@
                         this.firstFree = (this.firstFree + 1) % this.particles.length;
                         if (this.firstActive === this.firstFree) this.firstActive = (this.firstActive + 1) % this.particles.length;
                     }
-                    update(deltaTime, mouse) {
+                    update(deltaTime, mouse, offsetX, offsetY) {
                         let i = this.firstActive;
                         while (i !== this.firstFree) {
-                            this.particles[i].update(deltaTime, mouse);
+                            this.particles[i].update(deltaTime, mouse, offsetX, offsetY);
                             i = (i + 1) % this.particles.length;
                         }
                         while (this.particles[this.firstActive].age >= this.duration && this.firstActive !== this.firstFree) {
                             this.firstActive = (this.firstActive + 1) % this.particles.length;
                         }
                     }
-                    draw(ctx, image) {
+                    draw(ctx, image, offsetX, offsetY) {
                         let i = this.firstActive;
                         while (i !== this.firstFree) {
-                            this.particles[i].draw(ctx, image);
+                            this.particles[i].draw(ctx, image, offsetX, offsetY);
                             i = (i + 1) % this.particles.length;
                         }
                     }
@@ -206,29 +215,49 @@
                     smoothTilt.x += (tiltRef.current.x - smoothTilt.x) * 0.1;
                     smoothTilt.y += (tiltRef.current.y - smoothTilt.y) * 0.1;
 
-                    // 同步更新 UI 容器的位移 (直接操作 DOM 提升性能)
+                    // 同步更新 UI 容器的位移
                     if (uiRef.current) {
                         uiRef.current.style.transform = `translate3d(${smoothTilt.x}px, ${smoothTilt.y}px, 0)`;
                     }
 
-                    const centerX = canvas.width / 2 + smoothTilt.x;
-                    const centerY = canvas.height / 2 - 60 + smoothTilt.y;
+                    // 核心生成点保持固定不变
+                    const centerX = canvas.width / 2;
+                    const centerY = canvas.height / 2 - 40;
                     
-                    const distToMouse = Math.sqrt(Math.pow(mouseRef.current.x - centerX, 2) + Math.pow(mouseRef.current.y - centerY, 2));
+                    // 鼠标距离计算需要考虑陀螺仪偏移后的真实位置
+                    const distToMouse = Math.sqrt(Math.pow(mouseRef.current.x - (centerX + smoothTilt.x), 2) + Math.pow(mouseRef.current.y - (centerY + smoothTilt.y), 2));
                     const targetBpm = distToMouse < 180 ? 122 : 68;
                     setBpm(b => b + (targetBpm - b) * 0.05);
 
                     const pulse = 1 + Math.sin(time * (bpm / 12)) * 0.08;
                     const amount = particleRate * deltaTime;
+                    
+                    // 动态分布概率：根据陀螺仪倾斜度改变粒子生成的聚集位置
+                    // smoothTilt.x 左倾为负，右倾为正
+                    const tiltFactor = Math.max(-1, Math.min(1, smoothTilt.x / 60));
+                    // 左倾 (tiltFactor < 0) -> densityPower > 1 -> 随机数 u 偏向 0 -> 右侧粒子增多
+                    // 右倾 (tiltFactor > 0) -> densityPower < 1 -> 随机数 u 偏向 1 -> 左侧粒子增多
+                    const densityPower = Math.pow(2, -tiltFactor * 1.5);
+
                     for (let i = 0; i < amount; i++) {
-                        const t = Math.PI - 2 * Math.PI * Math.random();
+                        // 使用偏置后的随机数生成参数 t
+                        const u = Math.pow(Math.random(), densityPower);
+                        const t = Math.PI - 2 * Math.PI * u;
+                        
                         const pos = pointOnHeart(t);
-                        const dir = { x: pos.x * pulse, y: -pos.y * pulse };
+                        
+                        // 增加微弱的惯性风力效果，让粒子不仅生成偏向一侧，还会向该侧略微飘动
+                        const windX = -smoothTilt.x * 0.3; 
+                        
+                        const dir = { x: pos.x * pulse + windX, y: -pos.y * pulse };
                         const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y);
+                        // 生成粒子时不加偏移
                         particles.add(centerX + dir.x, centerY + dir.y, dir.x / len * settings.particles.velocity, dir.y / len * settings.particles.velocity);
                     }
-                    particles.update(deltaTime, mouseRef.current);
-                    particles.draw(ctx, texture);
+                    
+                    // 将偏移量传递给更新和绘制函数
+                    particles.update(deltaTime, mouseRef.current, smoothTilt.x, smoothTilt.y);
+                    particles.draw(ctx, texture, smoothTilt.x, smoothTilt.y);
                 };
 
                 render();
@@ -256,8 +285,8 @@
                     <canvas ref={canvasRef} className="absolute inset-0" />
                     
                     {/* UI Wrapper: 负责整体随陀螺仪偏移 */}
-                    <div ref={uiRef} id="ui-wrapper" className="absolute inset-0 pointer-events-none flex flex-col">
-                        <nav className="p-8 flex justify-between items-center">
+                    <div ref={uiRef} id="ui-wrapper" className="absolute inset-0 pointer-events-none">
+                        <nav className="absolute top-0 left-0 w-full p-8 flex justify-between items-center">
                             <div className="flex items-center gap-3">
                                 <div className="w-6 h-6 border border-red-500/30 flex items-center justify-center rotate-45">
                                     <i data-lucide="heart" className="w-3 h-3 text-red-500/80 -rotate-45 fill-red-500/40"></i>
@@ -266,19 +295,17 @@
                             </div>
                         </nav>
 
-                        {/* 名字居中方案：使用 Flex 占据剩余空间并居中 */}
-                        <div className="flex-1 flex flex-col items-center justify-center animate-fade">
-                            {/* 增加一个占据上方空间的 div，确保名字在爱心下方 */}
-                            <div className="h-40 md:h-60"></div> 
+                        {/* 问题3修复：使用 absolute 和 left-1/2 强制定宽居中 */}
+                        <div className="absolute top-[65%] md:top-[70%] left-1/2 -translate-x-1/2 flex flex-col items-center justify-center w-[90vw] md:w-[600px] animate-fade">
                             <div className="flex items-center gap-4 md:gap-8 text-4xl md:text-6xl font-black tracking-[0.2em] text-white/95 drop-shadow-[0_0_25px_rgba(255,30,70,0.5)]">
                                 <span>XIAO</span>
                                 <i data-lucide="heart" className="w-10 h-10 md:w-16 md:h-16 text-red-500 fill-red-500 animate-pulse"></i>
                                 <span>DING</span>
                             </div>
-                            <div className="h-[1px] w-32 md:w-64 bg-gradient-to-r from-transparent via-red-500/30 to-transparent mt-8" />
+                            <div className="h-[1px] w-32 md:w-64 bg-gradient-to-r from-transparent via-red-500/30 to-transparent mt-6 md:mt-8" />
                         </div>
 
-                        <div className="p-10 flex justify-between items-end opacity-30 text-[9px] tracking-[0.2em] font-mono uppercase">
+                        <div className="absolute bottom-0 left-0 w-full p-10 flex justify-between items-end opacity-30 text-[9px] tracking-[0.2em] font-mono uppercase">
                             <div className="flex flex-col gap-1">
                                 <div>Synchronization: Stable</div>
                                 <div>Heartbeat: {Math.round(bpm)} BPM</div>
@@ -290,7 +317,7 @@
                     </div>
 
                     {!initialized && (
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none animate-pulse text-[10px] tracking-[0.6em] opacity-40 uppercase text-center w-full">
+                        <div className="absolute top-[85%] left-1/2 -translate-x-1/2 pointer-events-none animate-pulse text-[10px] tracking-[0.6em] opacity-40 uppercase text-center w-full">
                             Touch to start affinity
                         </div>
                     )}
