@@ -95,12 +95,10 @@
                         let py = this.baseY;
                         let pz = this.baseZ;
 
-                        // Type 0 (体积组) 和 Type 2 (描边组) 共用基础呼吸缩放
                         if (this.type === 0 || this.type === 2) {
                             let pulse = 1 + globalBeat * 0.03;
                             px *= pulse; py *= pulse; pz *= pulse;
                         } else if (this.type === 1) {
-                            // 脉冲外射组
                             let offset = globalBeat * 25.0 * this.randomScale;
                             px += this.nx * offset;
                             py += this.ny * offset;
@@ -131,7 +129,6 @@
                         let canvasY = centerY + this.renderY * perspective;
 
                         if (this.type === 0) {
-                            // 1. 体积明暗阴影组
                             const lx = 0.5, ly = -0.5, lz = -0.8; 
                             const lLen = Math.sqrt(lx*lx + ly*ly + lz*lz);
                             const nLx = lx/lLen, nLy = ly/lLen, nLz = lz/lLen;
@@ -162,17 +159,13 @@
                                 ctx.drawImage(texture, canvasX - size / 2, canvasY - size / 2, size, size);
                             }
                         } else if (this.type === 1) {
-                            // 2. 脉冲跳动组
                             if (this.renderNZ < 0.1) { 
                                 ctx.globalAlpha = this.beatAlpha * this.randomScale;
                                 let size = texture.width * perspective * this.randomScale * (1.1 + globalBeat * 0.4);
                                 ctx.drawImage(texture, canvasX - size / 2, canvasY - size / 2, size, size);
                             }
                         } else if (this.type === 2) {
-                            // 3. 【全新】物理边界描边组
-                            // 无视光照矩阵，永远保持 85% 以上的高亮透明度，形成死死的物理边界实线
                             ctx.globalAlpha = 0.85 * this.randomScale;
-                            // 粒子体积稍微放大，形成画笔般的连贯感
                             let size = texture.width * perspective * this.randomScale * 1.5;
                             ctx.drawImage(texture, canvasX - size / 2, canvasY - size / 2, size, size);
                         }
@@ -183,14 +176,15 @@
                     const points = [];
                     const numCoreParticles = window.innerWidth < 768 ? 4000 : 7000; 
                     const numBeatParticles = window.innerWidth < 768 ? 1000 : 1500; 
-                    // 【新增：数千个只为描边而生的粒子】
                     const numOutlineParticles = window.innerWidth < 768 ? 2000 : 3500; 
                     
                     const scale = window.innerWidth < 768 ? 180 : 250; 
 
                     // 1. 生成主体体积 (Type 0 和 Type 1)
                     let generatedCore = 0;
-                    while (generatedCore < numCoreParticles + numBeatParticles) {
+                    let attempts = 0;
+                    while (generatedCore < numCoreParticles + numBeatParticles && attempts < 5000000) {
+                        attempts++;
                         let tx = (Math.random() - 0.5) * 3.0;
                         let ty = (Math.random() - 0.5) * 3.0;
                         let tz = (Math.random() - 0.5) * 3.0;
@@ -199,15 +193,19 @@
                         let term = tx2 + 2.25*ty2 + tz2 - 1;
                         let f = term*term*term - tx2*tz2*tz - 0.1125*ty2*tz2*tz;
                         
-                        if (f <= 0.0 && f >= -0.06) { 
-                            let term2 = 3 * term * term;
-                            let nx = term2 * 2 * tx - 2 * tx * tz2*tz;
-                            let ny = term2 * 4.5 * ty - 0.225 * ty * tz2*tz;
-                            let nz = term2 * 2 * tz - 3 * tx2 * tz2 - 0.3375 * ty2 * tz2;
-                            
-                            let gradLen = Math.sqrt(nx*nx + ny*ny + nz*nz);
-                            if (gradLen === 0 || Math.random() * 12 > gradLen) continue; 
-                            
+                        let term2 = 3 * term * term;
+                        let nx = term2 * 2 * tx - 2 * tx * tz2*tz;
+                        let ny = term2 * 4.5 * ty - 0.225 * ty * tz2*tz;
+                        let nz = term2 * 2 * tz - 3 * tx2 * tz2 - 0.3375 * ty2 * tz2;
+                        
+                        let gradLen = Math.sqrt(nx*nx + ny*ny + nz*nz);
+                        if (gradLen === 0) continue; 
+                        
+                        // 【核心修复】：真正的几何符号距离场（SDF）近似！
+                        // 通过 Math.abs(f) / gradLen 强制提取出绝对均匀厚度的壳，彻底根除顶部/底部畸形堆积
+                        let dist = Math.abs(f) / gradLen;
+                        
+                        if (dist < 0.025) { 
                             const type = generatedCore < numCoreParticles ? 0 : 1;
                             points.push(new DualSystemParticle(tx, ty, tz, nx, ny, nz, scale, type));
                             generatedCore++;
@@ -216,27 +214,29 @@
 
                     // 2. 生成绝美实线描边 (Type 2)
                     let generatedOutline = 0;
-                    while (generatedOutline < numOutlineParticles) {
+                    attempts = 0;
+                    while (generatedOutline < numOutlineParticles && attempts < 5000000) {
+                        attempts++;
                         let tx = (Math.random() - 0.5) * 3.0;
                         let tz = (Math.random() - 0.5) * 3.0;
-                        // 强制将厚度 ty 压缩在极薄的切面上，使其成为真正的一条 2D 线环
-                        let ty = (Math.random() - 0.5) * 0.08; 
+                        let ty = (Math.random() - 0.5) * 0.1; 
 
-                        let tx2 = tx*tx, ty2 = 0, tz2 = tz*tz;
+                        let tx2 = tx*tx, tz2 = tz*tz;
                         let term = tx2 + tz2 - 1;
                         let f = term*term*term - tx2*tz2*tz;
 
-                        // 极其严苛的采样，只允许存在于完美的几何轮廓上
-                        if (Math.abs(f) < 0.05) { 
-                            let term2 = 3 * term * term;
-                            let nx = term2 * 2 * tx - 2 * tx * tz2*tz;
-                            let ny = 0;
-                            let nz = term2 * 2 * tz - 3 * tx2 * tz2;
-                            
-                            // 去除容易堆积的杂质点，让线条像手绘一样顺滑
-                            let gradLen = Math.sqrt(nx*nx + nz*nz);
-                            if (gradLen === 0 || Math.random() * 8 > gradLen) continue;
+                        let term2 = 3 * term * term;
+                        let nx = term2 * 2 * tx - 2 * tx * tz2*tz;
+                        let ny = 0;
+                        let nz = term2 * 2 * tz - 3 * tx2 * tz2;
+                        
+                        let gradLen = Math.sqrt(nx*nx + nz*nz);
+                        if (gradLen === 0) continue;
 
+                        // 同样的 SDF 技术应用在 2D 轮廓上，确保线宽绝对均等如画笔一般
+                        let dist = Math.abs(f) / gradLen;
+                        
+                        if (dist < 0.015) { 
                             points.push(new DualSystemParticle(tx, ty, tz, nx, ny, nz, scale, 2));
                             generatedOutline++;
                         }
@@ -297,7 +297,6 @@
                     const renderCenterY = centerY + smoothTilt.y * 2.2;
 
                     particles.forEach(p => p.update3D(angleX, angleY, globalBeat));
-                    // 必须经过深度排序，确保 2D 线圈在 3D 旋转时的前后遮挡是正确的
                     particles.sort((a, b) => b.renderZ - a.renderZ);
                     particles.forEach(p => p.draw(ctx, pureTexture, renderCenterX, renderCenterY, globalBeat));
                 };
