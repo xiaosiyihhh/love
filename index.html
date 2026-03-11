@@ -80,6 +80,7 @@
                 // 提升粒子密度，极大幅度降低初速度，让粒子死死吸附在“边界”上
                 const settings = {
                     particles: { 
+                        // 这里是粒子数量的设置，原本是 2500 和 4500，现在翻倍到 5000 和 9000
                         length: window.innerWidth < 768 ? 5000 : 9000,
                         duration: 2.2, 
                         velocity: 15,   
@@ -262,8 +263,9 @@
                     smoothTilt.x += (tiltRef.current.x - smoothTilt.x) * 0.1;
                     smoothTilt.y += (tiltRef.current.y - smoothTilt.y) * 0.1;
 
+                    // 1. 反转 UI 的位移方向，拉大系数，与底层粒子形成多层视差分离
                     if (uiRef.current) {
-                        uiRef.current.style.transform = `translate3d(${smoothTilt.x * 0.1}px, ${smoothTilt.y * 0.1}px, 0)`;
+                        uiRef.current.style.transform = `translate3d(${-smoothTilt.x * 0.6}px, ${-smoothTilt.y * 0.6}px, 0)`;
                     }
 
                     const centerX = canvas.width / 2;
@@ -276,13 +278,16 @@
                     const pulse = 1 + Math.sin(time * (bpm / 12)) * 0.08;
                     const amount = particleRate * deltaTime;
                     
-                    // 将陀螺仪倾斜转化为 3D 旋转弧度，系数调大，增强一边大一边小的旋转感
-                    const angleY = smoothTilt.x * (Math.PI / 180) * 1.5; 
-                    const angleX = -smoothTilt.y * (Math.PI / 180) * 1.5; 
+                    // 2. 效果二核心：反转旋转角度，模拟摄像机视角围绕实体移动
+                    const angleY = -smoothTilt.x * (Math.PI / 180) * 1.5; 
+                    const angleX = smoothTilt.y * (Math.PI / 180) * 1.5; 
+
+                    // 3. 摄像机视差平移：模拟你透过屏幕边缘观察，物体产生的反向相对位移
+                    const renderCenterX = centerX - smoothTilt.x * 2.0;
+                    const renderCenterY = centerY - smoothTilt.y * 2.0;
 
                     for (let i = 0; i < amount; i++) {
                         const t = 2 * Math.PI * Math.random();
-                        // 权重偏向中央，让边界的实体感更强
                         const p = (Math.random() + Math.random() + Math.random()) / 3; 
                         
                         const pos3D = pointOnHeart3D(t, p);
@@ -300,8 +305,9 @@
                         particles.add(pos3D.x, pos3D.y, pos3D.z, vx, vy, vz);
                     }
                     
-                    particles.update(deltaTime, mouseRef.current, angleX, angleY, centerX, centerY, pulse);
-                    particles.draw(ctx, texture, angleX, angleY, centerX, centerY, pulse);
+                    // 4. 将带有反向视差平移的 renderCenter 传递给更新和渲染函数
+                    particles.update(deltaTime, mouseRef.current, angleX, angleY, renderCenterX, renderCenterY, pulse);
+                    particles.draw(ctx, texture, angleX, angleY, renderCenterX, renderCenterY, pulse);
                 };
 
                 render();
