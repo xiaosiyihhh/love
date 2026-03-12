@@ -10,16 +10,20 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        body { margin: 0; background-color: #050505; overflow: hidden; touch-action: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        body { margin: 0; background-color: #050505; overflow: hidden; touch-action: none; font-family: system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif; }
         canvas { display: block; }
         @keyframes fade-in {
-            from { opacity: 0; transform: scale(0.95) translateX(-50%); }
-            to { opacity: 1; transform: scale(1) translateX(-50%); }
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-        .animate-fade { 
-            animation: fade-in 1.5s ease-out forwards; 
-            transform-origin: left center;
+        .animate-fade { animation: fade-in 1.5s ease-out forwards; }
+        
+        /* 按钮光晕效果 */
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 15px rgba(255, 20, 50, 0.4); }
+            50% { box-shadow: 0 0 35px rgba(255, 20, 50, 0.8); }
         }
+        .btn-glow { animation: pulse-glow 2s infinite; }
     </style>
 </head>
 <body>
@@ -28,20 +32,30 @@
     <script type="text/babel">
         const { useEffect, useRef, useState } = React;
 
+        const STORY_MESSAGES = [
+            "茫茫人海中，",
+            "我的世界曾是一片混沌的星点",
+            "直到你如同强光般降临...",
+            "我喜欢你，\n你愿意做我女朋友吗？"
+        ];
+
         const App = () => {
             const canvasRef = useRef(null);
             const uiRef = useRef(null);
             const tiltRef = useRef({ x: 0, y: 0 }); 
-            const [bpm, setBpm] = useState(72);
+            const stageRef = useRef(0); 
+            const bpmRef = useRef(72);
+            const bpmDisplayRef = useRef(null);
+            
+            const [stage, setStage] = useState(0); 
             const [initialized, setInitialized] = useState(false);
 
-            const handleFirstInteraction = async () => {
-                if (initialized) return;
+            const initMotion = async () => {
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                     try {
                         const permission = await DeviceOrientationEvent.requestPermission();
                         if (permission === 'granted') window.addEventListener('deviceorientation', handleOrientation);
-                    } catch (e) { console.log("Motion access blocked"); }
+                    } catch (e) { console.log("Motion blocked"); }
                 } else {
                     window.addEventListener('deviceorientation', handleOrientation);
                 }
@@ -68,44 +82,160 @@
                 window.addEventListener('resize', resize);
                 resize();
 
-                class DualSystemParticle {
+                const getTextPixels = (text) => {
+                    const c = document.createElement('canvas');
+                    const w = window.innerWidth;
+                    const h = window.innerHeight;
+                    c.width = w; c.height = h;
+                    const tCtx = c.getContext('2d');
+                    
+                    tCtx.fillStyle = '#000';
+                    tCtx.fillRect(0, 0, w, h);
+                    tCtx.fillStyle = '#fff';
+                    
+                    const isMobile = w < 768;
+                    let fontSize = isMobile ? Math.min(w * 0.08, 50) : Math.min(w * 0.05, 90);
+                    if (stageRef.current === 4) {
+                        fontSize = isMobile ? Math.min(w * 0.06, 35) : Math.min(w * 0.04, 70); 
+                    }
+
+                    tCtx.font = `900 ${fontSize}px system-ui, -apple-system, "Microsoft YaHei", sans-serif`;
+                    tCtx.textAlign = 'center';
+                    tCtx.textBaseline = 'middle';
+                    
+                    const lines = text.split('\n');
+                    const lineHeight = fontSize * 1.4;
+                    const startY = h / 2 - ((lines.length - 1) * lineHeight) / 2;
+                    
+                    lines.forEach((line, i) => {
+                        let yOffset = stageRef.current === 4 ? startY + i * lineHeight - 80 : startY + i * lineHeight;
+                        tCtx.fillText(line, w / 2, yOffset);
+                    });
+                    
+                    const imgData = tCtx.getImageData(0, 0, w, h).data;
+                    const pixels = [];
+                    const step = isMobile ? 2 : 4; 
+                    
+                    for(let y = 0; y < h; y += step) {
+                        for(let x = 0; x < w; x += step) {
+                            if(imgData[(y * w + x) * 4] > 128) {
+                                pixels.push({ x: x - w / 2, y: y - h / 2 }); 
+                            }
+                        }
+                    }
+
+                    // 洗牌算法打乱像素点
+                    for (let i = pixels.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [pixels[i], pixels[j]] = [pixels[j], pixels[i]];
+                    }
+
+                    return pixels;
+                };
+
+                class MorphParticle {
                     constructor(tx, ty, tz, nx, ny, nz, scale, type) {
-                        this.baseX = tx * scale;
-                        this.baseY = -tz * scale; 
-                        this.baseZ = ty * scale * 0.65; 
+                        this.heartX = tx * scale;
+                        this.heartY = -tz * scale; 
+                        this.heartZ = ty * scale * 0.65; 
                         
                         this.nx = nx; this.ny = -nz; this.nz = ny;
                         let len = Math.sqrt(this.nx*this.nx + this.ny*this.ny + this.nz*this.nz) || 1;
                         this.nx /= len; this.ny /= len; this.nz /= len;
 
                         this.type = type; 
-
                         this.densityThreshold = Math.random(); 
                         this.randomScale = Math.random() * 0.3 + 0.7; 
-                        
+
+                        this.x = (Math.random() - 0.5) * 2500;
+                        this.y = (Math.random() - 0.5) * 2500;
+                        this.z = (Math.random() - 0.5) * 2500;
+
+                        this.targetX = this.x;
+                        this.targetY = this.y;
+                        this.targetZ = this.z;
+
+                        this.speed = 0;
+                        this.delay = 0;
+                        this.isBg = true;
+
                         this.renderX = 0; this.renderY = 0; this.renderZ = 0;
                         this.renderNX = 0; this.renderNY = 0; this.renderNZ = 0;
-
                         this.currentAlpha = 0; 
                         this.beatAlpha = 0;
                     }
 
-                    update3D(angleX, angleY, globalBeat) {
-                        let px = this.baseX;
-                        let py = this.baseY;
-                        let pz = this.baseZ;
+                    morphToText(pixels, isBackground = false, index = 0) {
+                        this.isBg = isBackground;
 
-                        if (this.type === 0 || this.type === 2) {
-                            let pulse = 1 + globalBeat * 0.03;
-                            px *= pulse; py *= pulse; pz *= pulse;
-                        } else if (this.type === 1) {
-                            let offset = globalBeat * 25.0 * this.randomScale;
-                            px += this.nx * offset;
-                            py += this.ny * offset;
-                            pz += this.nz * offset;
-                            this.beatAlpha = 0.1 + globalBeat * 0.9;
+                        if (isBackground || pixels.length === 0) {
+                            this.targetX = (Math.random() - 0.5) * 2500;
+                            this.targetY = (Math.random() - 0.5) * 2500;
+                            this.targetZ = (Math.random() - 0.5) * 2500;
+                            this.delay = 0;
+                            this.speed = 0.01 + Math.random() * 0.02;
+                            return;
                         }
 
+                        const p = pixels[index % pixels.length];
+                        
+                        this.targetX = p.x + (Math.random() - 0.5) * 1.5;
+                        this.targetY = p.y + (Math.random() - 0.5) * 1.5;
+                        this.targetZ = (Math.random() - 0.5) * 6; 
+                        
+                        this.delay = Math.floor(Math.random() * 35); 
+                        this.speed = 0.06 + Math.random() * 0.06; 
+                    }
+
+                    morphToHeart() {
+                        this.isBg = false; 
+                        this.targetX = this.heartX;
+                        this.targetY = this.heartY;
+                        this.targetZ = this.heartZ;
+                        
+                        this.delay = Math.floor(Math.random() * 45); 
+                        this.speed = 0.03 + Math.random() * 0.04; 
+                    }
+
+                    updatePhysics(stageVal, globalBeat, time) {
+                        if (this.delay > 0) {
+                            this.delay--;
+                            this.x += Math.sin(time + this.densityThreshold * 10) * 0.5;
+                        } else {
+                            this.x += (this.targetX - this.x) * this.speed;
+                            this.y += (this.targetY - this.y) * this.speed;
+                            this.z += (this.targetZ - this.z) * this.speed;
+                        }
+
+                        if (this.isBg && stageVal < 5) {
+                            this.x += Math.sin(time * 0.8 + this.densityThreshold * 20) * 1.5;
+                            this.y += Math.cos(time * 0.6 + this.densityThreshold * 20) * 1.5;
+                        }
+
+                        let px = this.x;
+                        let py = this.y;
+                        let pz = this.z;
+
+                        if (stageVal === 5) {
+                            if (this.type === 0 || this.type === 2) {
+                                let pulse = 1 + globalBeat * 0.03;
+                                px *= pulse; py *= pulse; pz *= pulse;
+                            } else if (this.type === 1) {
+                                let offset = globalBeat * 25.0 * this.randomScale;
+                                px += this.nx * offset;
+                                py += this.ny * offset;
+                                pz += this.nz * offset;
+                                this.beatAlpha = 0.1 + globalBeat * 0.9;
+                            }
+                        } else if (stageVal === 4 && !this.isBg) {
+                            let textPulse = 1 + globalBeat * 0.04; 
+                            px *= textPulse; py *= textPulse;
+                        }
+
+                        return { px, py, pz };
+                    }
+
+                    applyRotation(px, py, pz, angleX, angleY) {
                         let cx = Math.cos(angleX), sx = Math.sin(angleX);
                         let cy = Math.cos(angleY), sy = Math.sin(angleY);
 
@@ -122,65 +252,91 @@
                         this.renderNZ = -this.nx * sy + nz1 * cy;
                     }
 
-                    draw(ctx, texture, centerX, centerY, globalBeat) {
+                    draw(ctx, texture, centerX, centerY, stageVal, globalBeat, time) {
                         const fov = 400;
                         const perspective = fov / (fov + this.renderZ);
                         let canvasX = centerX + this.renderX * perspective;
                         let canvasY = centerY + this.renderY * perspective;
 
-                        if (this.type === 0) {
-                            const lx = 0.5, ly = -0.5, lz = -0.8; 
-                            const lLen = Math.sqrt(lx*lx + ly*ly + lz*lz);
-                            const nLx = lx/lLen, nLy = ly/lLen, nLz = lz/lLen;
-                            
-                            const dotLight = this.renderNX * nLx + this.renderNY * nLy + this.renderNZ * nLz;
-                            let lightIntensity = Math.max(0, dotLight);
-                            let edgeIntensity = Math.pow(1.0 - Math.abs(this.renderNZ), 2.5);
+                        let distToTarget = Math.sqrt(
+                            Math.pow(this.targetX - this.x, 2) + 
+                            Math.pow(this.targetY - this.y, 2) + 
+                            Math.pow(this.targetZ - this.z, 2)
+                        );
+                        let flyBlend = Math.max(0, Math.min(1, distToTarget / 80.0));
 
-                            let targetDensity = 0.01; 
-                            if (this.renderNZ < 0) { 
-                                targetDensity += Math.pow(lightIntensity, 1.5) * 0.95; 
-                                targetDensity += edgeIntensity * 0.2; 
-                            } else { 
-                                targetDensity += edgeIntensity * 0.05; 
-                            }
+                        let finalAlpha = 0;
+                        let finalSize = texture.width * perspective * this.randomScale;
 
-                            let visibleFactor = targetDensity - this.densityThreshold;
-                            let targetAlpha = 0;
-                            if (visibleFactor > 0) {
-                                targetAlpha = Math.min(1.0, visibleFactor * 8.0) * 0.95;
+                        if (stageVal < 5) {
+                            if (this.isBg) {
+                                let twinkle = 0.2 + 0.8 * Math.pow(Math.sin(time * 3 + this.densityThreshold * 50), 2);
+                                finalAlpha = twinkle * 0.5 * this.randomScale; 
+                                finalSize *= 1.2;
+                            } else {
+                                if (stageVal === 4 && flyBlend < 0.1) {
+                                    let breatheAlpha = 0.4 + 0.6 * globalBeat; 
+                                    finalAlpha = breatheAlpha * this.randomScale;
+                                } else {
+                                    finalAlpha = Math.min(1.0, 0.5 + flyBlend * 0.5) * this.randomScale;
+                                }
+                                if (flyBlend > 0.1) finalSize *= 2.0; 
                             }
+                        } else {
+                            if (this.type === 0) {
+                                const lx = 0.85, ly = -0.85, lz = -0.2; 
+                                const lLen = Math.sqrt(lx*lx + ly*ly + lz*lz);
+                                const nLx = lx/lLen, nLy = ly/lLen, nLz = lz/lLen;
+                                
+                                const dotLight = this.renderNX * nLx + this.renderNY * nLy + this.renderNZ * nLz;
+                                let lightIntensity = Math.max(0, dotLight);
+                                let edgeIntensity = Math.pow(1.0 - Math.abs(this.renderNZ), 3.0);
 
-                            this.currentAlpha += (targetAlpha - this.currentAlpha) * 0.15;
+                                let targetDensity = 0.002; 
+                                if (this.renderNZ < 0) { 
+                                    let diffuse = Math.pow(lightIntensity, 2.0) * 0.15;
+                                    let spotlight = Math.pow(lightIntensity, 10.0) * 3.5; 
+                                    targetDensity += diffuse + spotlight;
+                                    targetDensity += edgeIntensity * 0.35; 
+                                } else { 
+                                    targetDensity += edgeIntensity * 0.05; 
+                                }
 
-                            if (this.currentAlpha > 0.02) {
-                                ctx.globalAlpha = this.currentAlpha;
-                                let size = texture.width * perspective * this.randomScale;
-                                ctx.drawImage(texture, canvasX - size / 2, canvasY - size / 2, size, size);
+                                let visibleFactor = targetDensity - this.densityThreshold;
+                                let targetSDFAlpha = visibleFactor > 0 ? Math.min(1.0, visibleFactor * 10.0) * 0.95 : 0;
+                                
+                                let targetAlpha = targetSDFAlpha * (1 - flyBlend) + 1.0 * flyBlend;
+                                
+                                this.currentAlpha += (targetAlpha - this.currentAlpha) * 0.15;
+                                finalAlpha = this.currentAlpha;
+                                if(flyBlend > 0) finalSize *= (1 + flyBlend);
+
+                            } else if (this.type === 1) {
+                                if (this.renderNZ < 0.1 || flyBlend > 0) { 
+                                    finalAlpha = (this.beatAlpha * (1-flyBlend) + 1.0 * flyBlend) * this.randomScale;
+                                    finalSize *= (1.1 + globalBeat * 0.4);
+                                }
+                            } else if (this.type === 2) {
+                                finalAlpha = 0.85 * this.randomScale * (1-flyBlend) + 1.0 * flyBlend;
+                                finalSize *= 1.5;
                             }
-                        } else if (this.type === 1) {
-                            if (this.renderNZ < 0.1) { 
-                                ctx.globalAlpha = this.beatAlpha * this.randomScale;
-                                let size = texture.width * perspective * this.randomScale * (1.1 + globalBeat * 0.4);
-                                ctx.drawImage(texture, canvasX - size / 2, canvasY - size / 2, size, size);
-                            }
-                        } else if (this.type === 2) {
-                            ctx.globalAlpha = 0.85 * this.randomScale;
-                            let size = texture.width * perspective * this.randomScale * 1.5;
-                            ctx.drawImage(texture, canvasX - size / 2, canvasY - size / 2, size, size);
+                        }
+
+                        if (finalAlpha > 0.02) {
+                            ctx.globalAlpha = finalAlpha;
+                            ctx.drawImage(texture, canvasX - finalSize / 2, canvasY - finalSize / 2, finalSize, finalSize);
                         }
                     }
                 }
 
-                const generateTaubinHeart = () => {
+                const generateParticles = () => {
                     const points = [];
-                    const numCoreParticles = window.innerWidth < 768 ? 8000 : 14000; 
+                    const numCoreParticles = window.innerWidth < 768 ? 5000 : 8000; 
                     const numBeatParticles = window.innerWidth < 768 ? 1000 : 1500; 
-                    const numOutlineParticles = window.innerWidth < 768 ? 2000 : 3500; 
+                    const numOutlineParticles = window.innerWidth < 768 ? 2500 : 4000; 
                     
                     const scale = window.innerWidth < 768 ? 180 : 250; 
 
-                    // 1. 生成主体体积 (Type 0 和 Type 1)
                     let generatedCore = 0;
                     let attempts = 0;
                     while (generatedCore < numCoreParticles + numBeatParticles && attempts < 5000000) {
@@ -201,18 +357,14 @@
                         let gradLen = Math.sqrt(nx*nx + ny*ny + nz*nz);
                         if (gradLen === 0) continue; 
                         
-                        // 【核心修复】：真正的几何符号距离场（SDF）近似！
-                        // 通过 Math.abs(f) / gradLen 强制提取出绝对均匀厚度的壳，彻底根除顶部/底部畸形堆积
                         let dist = Math.abs(f) / gradLen;
-                        
                         if (dist < 0.025) { 
                             const type = generatedCore < numCoreParticles ? 0 : 1;
-                            points.push(new DualSystemParticle(tx, ty, tz, nx, ny, nz, scale, type));
+                            points.push(new MorphParticle(tx, ty, tz, nx, ny, nz, scale, type));
                             generatedCore++;
                         }
                     }
 
-                    // 2. 生成绝美实线描边 (Type 2)
                     let generatedOutline = 0;
                     attempts = 0;
                     while (generatedOutline < numOutlineParticles && attempts < 5000000) {
@@ -233,28 +385,27 @@
                         let gradLen = Math.sqrt(nx*nx + nz*nz);
                         if (gradLen === 0) continue;
 
-                        // 同样的 SDF 技术应用在 2D 轮廓上，确保线宽绝对均等如画笔一般
                         let dist = Math.abs(f) / gradLen;
-                        
                         if (dist < 0.015) { 
-                            points.push(new DualSystemParticle(tx, ty, tz, nx, ny, nz, scale, 2));
+                            points.push(new MorphParticle(tx, ty, tz, nx, ny, nz, scale, 2));
                             generatedOutline++;
                         }
                     }
-
                     return points;
                 };
 
-                const particles = generateTaubinHeart();
-                let time;
+                const particles = generateParticles();
+                
+                let time = Date.now() / 1000;
+                let currentPhase = 0; 
 
                 const createPureParticle = () => {
                     const tCanvas = document.createElement('canvas');
-                    tCanvas.width = tCanvas.height = 3;
+                    tCanvas.width = tCanvas.height = 4;
                     const tCtx = tCanvas.getContext('2d');
-                    tCtx.fillStyle = 'rgba(255, 25, 45, 0.95)'; 
+                    tCtx.fillStyle = 'rgba(255, 20, 50, 0.95)'; 
                     tCtx.beginPath();
-                    tCtx.arc(1.5, 1.5, 1.2, 0, Math.PI * 2);
+                    tCtx.arc(2, 2, 1.5, 0, Math.PI * 2);
                     tCtx.fill();
                     return tCanvas;
                 };
@@ -262,9 +413,23 @@
 
                 let smoothTilt = { x: 0, y: 0 };
 
+                window.triggerStageUpdate = (newStage) => {
+                    if (newStage >= 1 && newStage <= 4) {
+                        const pixels = getTextPixels(STORY_MESSAGES[newStage - 1]);
+                        particles.forEach((p, index) => {
+                            const isBackground = (index % 6 === 0);
+                            p.morphToText(pixels, isBackground, index);
+                        });
+                    } else if (newStage === 5) {
+                        particles.forEach(p => p.morphToHeart());
+                    }
+                };
+
                 const render = () => {
                     animationFrameId = requestAnimationFrame(render);
+                    
                     const newTime = Date.now() / 1000;
+                    const deltaTime = newTime - time; 
                     time = newTime;
                     
                     ctx.fillStyle = '#050505';
@@ -281,14 +446,22 @@
                     }
 
                     const centerX = canvas.width / 2;
-                    const centerY = canvas.height / 2 - 30;
+                    const centerY = canvas.height / 2; 
                     
-                    const currentBpm = 72;
-                    setBpm(currentBpm);
+                    const targetAnimBpm = stageRef.current === 4 ? 30 : 72;
+                    bpmRef.current += (targetAnimBpm - bpmRef.current) * 0.05;
+                    
+                    if (bpmDisplayRef.current) {
+                        bpmDisplayRef.current.innerText = Math.round(bpmRef.current);
+                    }
 
-                    let bps = currentBpm / 60;
-                    let phase = time * bps * Math.PI * 2;
-                    let globalBeat = Math.pow((Math.sin(phase - Math.PI / 2) + 1) / 2, 1.5);
+                    let bps = bpmRef.current / 60;
+                    currentPhase += deltaTime * bps * Math.PI * 2;
+                    
+                    let globalBeat = 0;
+                    if (stageRef.current >= 4) {
+                        globalBeat = Math.pow((Math.sin(currentPhase - Math.PI / 2) + 1) / 2, 1.5);
+                    }
 
                     const angleY = smoothTilt.x * (Math.PI / 180) * 1.4; 
                     const angleX = -smoothTilt.y * (Math.PI / 180) * 1.4; 
@@ -296,9 +469,14 @@
                     const renderCenterX = centerX - smoothTilt.x * 2.2;
                     const renderCenterY = centerY + smoothTilt.y * 2.2;
 
-                    particles.forEach(p => p.update3D(angleX, angleY, globalBeat));
+                    particles.forEach(p => {
+                        const { px, py, pz } = p.updatePhysics(stageRef.current, globalBeat, time);
+                        p.applyRotation(px, py, pz, angleX, angleY);
+                    });
+
                     particles.sort((a, b) => b.renderZ - a.renderZ);
-                    particles.forEach(p => p.draw(ctx, pureTexture, renderCenterX, renderCenterY, globalBeat));
+
+                    particles.forEach(p => p.draw(ctx, pureTexture, renderCenterX, renderCenterY, stageRef.current, globalBeat, time));
                 };
 
                 render();
@@ -307,17 +485,38 @@
                     window.removeEventListener('resize', resize);
                     window.removeEventListener('deviceorientation', handleOrientation);
                 };
-            }, []);
+            }, []); 
+
+            const handleGlobalClick = (e) => {
+                if (e.target.tagName.toLowerCase() === 'button') return;
+                
+                if (stage < 4) {
+                    if (stage === 0) initMotion(); 
+                    const nextStage = stage + 1;
+                    stageRef.current = nextStage;
+                    setStage(nextStage);
+                    window.triggerStageUpdate(nextStage);
+                }
+            };
+
+            const acceptProposal = (e) => {
+                e.stopPropagation(); 
+                const nextStage = 5;
+                stageRef.current = nextStage;
+                setStage(nextStage);
+                window.triggerStageUpdate(nextStage);
+            };
 
             return (
                 <div className="w-full h-screen bg-[#050505] overflow-hidden relative font-sans text-white select-none cursor-default"
-                     onClick={handleFirstInteraction}>
+                     onClick={handleGlobalClick}>
                     
                     <div className="absolute inset-0 pointer-events-none opacity-5" style={{ backgroundImage: 'radial-gradient(#ff1432 1px, transparent 1px)', backgroundSize: '50px 50px' }} />
                     <canvas ref={canvasRef} className="absolute inset-0" />
                     
                     <div ref={uiRef} id="ui-wrapper" className="absolute inset-0 pointer-events-none">
-                        <nav className="absolute top-0 left-0 w-full p-8 flex justify-between items-center">
+                        
+                        <nav className={`absolute top-0 left-0 w-full p-8 flex justify-between items-center transition-opacity duration-1000 ${stage === 5 ? 'opacity-100' : 'opacity-0'}`}>
                             <div className="flex items-center gap-3">
                                 <div className="w-6 h-6 border border-red-500/30 flex items-center justify-center rotate-45">
                                     <i data-lucide="heart" className="w-3 h-3 text-red-500/80 -rotate-45 fill-red-500/40"></i>
@@ -326,7 +525,7 @@
                             </div>
                         </nav>
 
-                        <div className="absolute top-[65%] md:top-[70%] left-1/2 -translate-x-1/2 flex flex-col items-center justify-center w-full max-w-[100vw] px-4 box-border animate-fade">
+                        <div className={`absolute top-[65%] md:top-[70%] left-1/2 -translate-x-1/2 flex flex-col items-center justify-center w-full max-w-[100vw] px-4 box-border transition-all duration-2000 ${stage === 5 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
                             <div className="flex items-center justify-center gap-2 sm:gap-4 md:gap-8 font-black text-white/95 drop-shadow-[0_0_25px_rgba(255,20,50,0.5)]">
                                 <span className="text-[clamp(1.8rem,7vw,3.75rem)] tracking-[0.1em] sm:tracking-[0.2em]">XIAO</span>
                                 <i data-lucide="heart" className="w-[clamp(2rem,6vw,4rem)] h-[clamp(2rem,6vw,4rem)] text-red-500 fill-red-500 animate-pulse shrink-0"></i>
@@ -335,20 +534,34 @@
                             <div className="h-[1px] w-32 md:w-64 bg-gradient-to-r from-transparent via-red-500/30 to-transparent mt-4 md:mt-8" />
                         </div>
 
-                        <div className="absolute bottom-0 left-0 w-full p-8 md:p-10 flex justify-between items-end opacity-30 text-[9px] tracking-[0.2em] font-mono uppercase">
+                        <div className={`absolute bottom-0 left-0 w-full p-8 md:p-10 flex justify-between items-end opacity-30 text-[9px] tracking-[0.2em] font-mono uppercase transition-opacity duration-1000 ${stage === 5 ? 'opacity-100' : 'opacity-0'}`}>
                             <div className="flex flex-col gap-1">
-                                <div>Sync: Stable</div>
-                                <div>BPM: {Math.round(bpm)}</div>
+                                <div>Sync: 100%</div>
+                                <div>BPM: <span ref={bpmDisplayRef}>72</span></div>
                             </div>
                             <div className="text-right tracking-[0.3em]">
                                 X & D <br/> Affinity
                             </div>
                         </div>
+
+                        <div className={`absolute bottom-24 w-full flex justify-center transition-all duration-1000 z-50 ${stage === 4 ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-10 pointer-events-none'}`}>
+                            <button 
+                                onClick={acceptProposal}
+                                className="px-14 py-4 bg-red-600/90 text-white rounded-full font-black tracking-widest text-xl md:text-2xl btn-glow hover:bg-red-500 hover:scale-105 transition-all duration-300 active:scale-95"
+                            >
+                                我愿意
+                            </button>
+                        </div>
                     </div>
 
-                    {!initialized && (
-                        <div className="absolute top-[85%] left-1/2 -translate-x-1/2 pointer-events-none animate-pulse text-[10px] tracking-[0.6em] opacity-40 uppercase text-center w-full">
-                            Touch to start affinity
+                    {stage === 0 && (
+                        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 pointer-events-none animate-pulse text-[10px] tracking-[0.6em] opacity-40 uppercase text-center w-full">
+                            Tap / Click to initialize
+                        </div>
+                    )}
+                    {stage > 0 && stage < 4 && (
+                        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 pointer-events-none text-[9px] tracking-[0.4em] opacity-20 uppercase text-center w-full">
+                            Tap / Click to continue
                         </div>
                     )}
                 </div>
