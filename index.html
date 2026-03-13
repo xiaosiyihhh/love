@@ -76,8 +76,13 @@
                 let animationFrameId;
 
                 const resize = () => {
-                    canvas.width = window.innerWidth;
-                    canvas.height = window.innerHeight;
+                    // 【核心修复1：引入设备像素比(DPR)，解决高分屏下的发虚、马赛克问题】
+                    const dpr = window.devicePixelRatio || 1;
+                    canvas.width = window.innerWidth * dpr;
+                    canvas.height = window.innerHeight * dpr;
+                    canvas.style.width = `${window.innerWidth}px`;
+                    canvas.style.height = `${window.innerHeight}px`;
+                    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 };
                 window.addEventListener('resize', resize);
                 resize();
@@ -114,7 +119,8 @@
                     
                     const imgData = tCtx.getImageData(0, 0, w, h).data;
                     const pixels = [];
-                    const step = isMobile ? 2 : 4; 
+                    // 【核心修复2：稍微缩小电脑端采样步长，让粒子点阵更加密集清晰】
+                    const step = isMobile ? 2 : 3; 
                     
                     for(let y = 0; y < h; y += step) {
                         for(let x = 0; x < w; x += step) {
@@ -179,9 +185,10 @@
 
                         const p = pixels[index % pixels.length];
                         
-                        this.targetX = p.x + (Math.random() - 0.5) * 1.5;
-                        this.targetY = p.y + (Math.random() - 0.5) * 1.5;
-                        this.targetZ = (Math.random() - 0.5) * 6; 
+                        // 【核心修复3：极度缩小组合成文字时的随机位置抖动值，边缘更锐利，不发散】
+                        this.targetX = p.x + (Math.random() - 0.5) * 0.8;
+                        this.targetY = p.y + (Math.random() - 0.5) * 0.8;
+                        this.targetZ = (Math.random() - 0.5) * 3; 
                         
                         this.delay = Math.floor(Math.random() * 35); 
                         this.speed = 0.06 + Math.random() * 0.06; 
@@ -266,7 +273,9 @@
                         let flyBlend = Math.max(0, Math.min(1, distToTarget / 80.0));
 
                         let finalAlpha = 0;
-                        let finalSize = texture.width * perspective * this.randomScale;
+                        // 【适配高清贴图】：原始宽度 8px 除以 2，保持原有物理视觉大小比例
+                        let baseSize = (texture.width / 2) * perspective * this.randomScale;
+                        let finalSize = baseSize;
 
                         if (stageVal < 5) {
                             if (this.isBg) {
@@ -401,11 +410,13 @@
 
                 const createPureParticle = () => {
                     const tCanvas = document.createElement('canvas');
-                    tCanvas.width = tCanvas.height = 4;
+                    // 【核心修复4：提升粒子内部贴图渲染分辨率，怎么放大都不会糊】
+                    tCanvas.width = 8;
+                    tCanvas.height = 8;
                     const tCtx = tCanvas.getContext('2d');
                     tCtx.fillStyle = 'rgba(255, 20, 50, 0.95)'; 
                     tCtx.beginPath();
-                    tCtx.arc(2, 2, 1.5, 0, Math.PI * 2);
+                    tCtx.arc(4, 4, 3, 0, Math.PI * 2);
                     tCtx.fill();
                     return tCanvas;
                 };
@@ -414,13 +425,13 @@
                 let smoothTilt = { x: 0, y: 0 };
 
                 window.triggerStageUpdate = (newStage) => {
-                    if (newStage >= 1 && newStage <= 4) {
+                    if (newStage >= 1 && newStage <= 4) { 
                         const pixels = getTextPixels(STORY_MESSAGES[newStage - 1]);
                         particles.forEach((p, index) => {
                             const isBackground = (index % 6 === 0);
                             p.morphToText(pixels, isBackground, index);
                         });
-                    } else if (newStage === 5) {
+                    } else if (newStage === 5) { 
                         particles.forEach(p => p.morphToHeart());
                     }
                 };
@@ -433,7 +444,7 @@
                     time = newTime;
                     
                     ctx.fillStyle = '#050505';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
                     let targetTiltX = tiltRef.current.x;
                     let targetTiltY = tiltRef.current.y;
@@ -445,8 +456,9 @@
                         uiRef.current.style.transform = `translate3d(${smoothTilt.x * 0.8}px, ${-smoothTilt.y * 0.8}px, 0)`;
                     }
 
-                    const centerX = canvas.width / 2;
-                    const centerY = canvas.height / 2; 
+                    // 【核心修复：统一使用 window 的逻辑像素来计算中心点，杜绝高分屏缩放导致的偏移】
+                    const centerX = window.innerWidth / 2;
+                    const centerY = stageRef.current === 4 ? window.innerHeight / 2 - 60 : window.innerHeight / 2; 
                     
                     const targetAnimBpm = stageRef.current === 4 ? 30 : 72;
                     bpmRef.current += (targetAnimBpm - bpmRef.current) * 0.05;
@@ -459,7 +471,7 @@
                     currentPhase += deltaTime * bps * Math.PI * 2;
                     
                     let globalBeat = 0;
-                    if (stageRef.current >= 4) {
+                    if (stageRef.current >= 4) { 
                         globalBeat = Math.pow((Math.sin(currentPhase - Math.PI / 2) + 1) / 2, 1.5);
                     }
 
